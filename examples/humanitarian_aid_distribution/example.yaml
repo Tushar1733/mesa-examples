@@ -1,0 +1,7 @@
+name: humanitarian_aid_distribution
+maintainer: your_username
+status: active
+mesa_version: ">=3.0"
+python: ">=3.10"
+requirements: requirements.txt
+run: solara run app.py

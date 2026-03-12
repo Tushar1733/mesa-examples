@@ -15,10 +15,12 @@ Exit codes
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -29,8 +31,8 @@ import yaml
 # Constants / defaults
 # ---------------------------------------------------------------------------
 EXAMPLES_DIR = "examples"
-DEFAULT_TIMEOUT = 10          # seconds per example
-SERVER_BOOT_WAIT = 6          # seconds to wait before health-check
+DEFAULT_TIMEOUT = 30          # seconds per example (solara needs ~8-15s to boot)
+SERVER_BOOT_WAIT = 10         # seconds to wait before health-check
 # Each entry: (pattern_to_match, human-readable label)
 # Order matters — more specific patterns should come first.
 ERROR_PATTERNS: list[tuple[str, str]] = [
@@ -129,9 +131,35 @@ def load_metadata(example_path: str) -> Optional[ExampleMetadata]:
 # ---------------------------------------------------------------------------
 # 3. Dependency installation
 # ---------------------------------------------------------------------------
+# Packages that should never be reinstalled from PyPI during CI validation.
+# mesa is developed in-repo; reinstalling a pinned version would overwrite it.
+# matplotlib, solara, etc. are assumed already present in the CI environment.
+SKIP_PACKAGES = {"mesa", "matplotlib", "solara"}
+
+
+def _filter_requirements(req_file: str) -> list[str]:
+    """
+    Read a requirements.txt and return only the lines that should be installed.
+    Skips blank lines, comments, and any package in SKIP_PACKAGES.
+    """
+    kept: list[str] = []
+    with open(req_file, "r") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Extract the bare package name (before any version specifier)
+            pkg_name = line.split("~=")[0].split("==")[0].split(">=")[0]                            .split("<=")[0].split("!=")[0].split(">")[0]                            .split("<")[0].split("[")[0].strip().lower()
+            if pkg_name in SKIP_PACKAGES:
+                print(f"    Skipping {line!r} (provided by repo/environment)")
+                continue
+            kept.append(line)
+    return kept
+
+
 def install_dependencies(meta: ExampleMetadata) -> tuple[bool, str]:
     """
-    Install requirements listed in metadata.
+    Install requirements listed in metadata, skipping repo-managed packages.
     Returns (success, error_message).
     """
     if not meta.requirements:
@@ -141,9 +169,15 @@ def install_dependencies(meta: ExampleMetadata) -> tuple[bool, str]:
     if not os.path.isfile(req_file):
         return False, f"requirements file not found: {req_file}"
 
-    print(f"  Installing dependencies from {req_file} …")
+    packages = _filter_requirements(req_file)
+
+    if not packages:
+        print(f"  No external dependencies to install for {meta.name}.")
+        return True, ""
+
+    print(f"  Installing {len(packages)} dependenc{'y' if len(packages)==1 else 'ies'} from {req_file} …")
     result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-r", req_file, "--quiet"],
+        [sys.executable, "-m", "pip", "install", *packages, "--quiet"],
         capture_output=True,
         text=True,
     )
@@ -152,16 +186,25 @@ def install_dependencies(meta: ExampleMetadata) -> tuple[bool, str]:
     return True, ""
 
 
+# Legacy run commands that no longer exist in modern Mesa
+LEGACY_COMMANDS: list[tuple[tuple, str]] = [
+    (("mesa", "runserver"), "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'"),
+    (("mesa",),             "Legacy Mesa API: mesa CLI removed - migrate to 'solara run app.py'"),
+]
+
+
 # ---------------------------------------------------------------------------
 # 4 & 5. Execution + health-check
 # ---------------------------------------------------------------------------
 def _build_command(run_cmd: str) -> list[str]:
     """
     Convert the run string from metadata into a list suitable for Popen.
-    Injects --no-browser for solara commands.
+    Raises ValueError with a clear message for known legacy commands.
     """
     parts = run_cmd.strip().split()
-
+    for legacy_parts, message in LEGACY_COMMANDS:
+        if tuple(parts[:len(legacy_parts)]) == legacy_parts:
+            raise ValueError(message)
     return parts
 
 
@@ -176,15 +219,16 @@ def detect_errors(text: str) -> Optional[str]:
     return None
 
 
-def check_server(port: int, retries: int = 3, delay: float = 1.5) -> bool:
+def check_server(port: int, retries: int = 5, delay: float = 1.0) -> bool:
     """
     Send an HTTP GET to localhost:<port>.
     Returns True if any attempt gets a 200 response.
+    Each attempt has a short timeout so we don't burn the example deadline.
     """
     url = f"http://localhost:{port}"
     for attempt in range(1, retries + 1):
         try:
-            resp = requests.get(url, timeout=5)
+            resp = requests.get(url, timeout=3)
             if resp.status_code == 200:
                 return True
         except requests.RequestException:
@@ -202,7 +246,11 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
     if not meta.run:
         return ExampleResult(name=meta.name, status=STATUS_FAIL, notes="No run command in metadata")
 
-    cmd = _build_command(meta.run)
+    try:
+        cmd = _build_command(meta.run)
+    except ValueError as exc:
+        return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=str(exc))
+
     print(f"  Running: {' '.join(cmd)}")
 
     try:
@@ -212,9 +260,27 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            # shell=True is needed on Windows so that script wrappers like
+            # solara.cmd / solara.exe are resolved via PATH correctly.
+            shell=(sys.platform == "win32"),
         )
-    except FileNotFoundError as exc:
-        return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=f"Command not found: {exc}")
+    except FileNotFoundError:
+        # Fallback: retry with shell=True (covers edge cases on all platforms)
+        try:
+            process = subprocess.Popen(
+                " ".join(cmd),
+                cwd=meta.path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                shell=True,
+            )
+        except Exception:
+            if cmd and cmd[0] == "mesa":
+                return ExampleResult(name=meta.name, status=STATUS_FAIL,
+                    notes="Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'")
+            return ExampleResult(name=meta.name, status=STATUS_FAIL,
+                notes=f"Command not found: '{cmd[0]}' is not installed or not on PATH")
     except Exception as exc:
         return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=str(exc))
 
@@ -247,7 +313,7 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
         combined = "".join(stdout_lines) + "".join(stderr_lines)
         err_match = detect_errors(combined)
         if err_match:
-            _terminate(process)
+            _terminate(process, meta.port)
             t_out.join(timeout=2)
             t_err.join(timeout=2)
             return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=err_match)
@@ -278,7 +344,7 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
 
     # ── Step 5: HTTP health-check ────────────────────────────────────────────
     if time.time() >= deadline:
-        _terminate(process)
+        _terminate(process, meta.port)
         # Even on timeout, check if there are error messages in captured output
         t_out.join(timeout=2)
         t_err.join(timeout=2)
@@ -291,7 +357,7 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
     server_ok = check_server(meta.port)
 
     # ── Step 6: Terminate ────────────────────────────────────────────────────
-    _terminate(process)
+    _terminate(process, meta.port)
     t_out.join(timeout=2)
     t_err.join(timeout=2)
 
@@ -304,8 +370,47 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
     return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=f"Server did not respond on port {meta.port}")
 
 
-def _terminate(process: subprocess.Popen) -> None:
-    """Cleanly terminate a process and all its children."""
+def _kill_port(port: int) -> None:
+    """Force-kill any process still listening on the given port (cross-platform)."""
+    import signal as _signal
+
+    if sys.platform == "win32":
+        try:
+            # netstat -ano lists PID for each connection
+            out = subprocess.check_output(
+                ["netstat", "-ano"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            for line in out.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.strip().split()
+                    pid = int(parts[-1])
+                    subprocess.call(
+                        ["taskkill", "/F", "/PID", str(pid)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+        except Exception:
+            pass
+    else:
+        try:
+            out = subprocess.check_output(
+                ["lsof", "-ti", f"tcp:{port}"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            for pid_str in out.strip().splitlines():
+                try:
+                    os.kill(int(pid_str), _signal.SIGKILL)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+
+def _terminate(process: subprocess.Popen, port: int = 0) -> None:
+    """Cleanly terminate a process, all its children, and free the port."""
     try:
         process.terminate()
         try:
@@ -323,40 +428,74 @@ def _terminate(process: subprocess.Popen) -> None:
     except Exception:
         pass
 
+    # Ensure the port is free regardless of what happened above
+    if port:
+        _kill_port(port)
+        time.sleep(0.5)  # brief pause so the OS reclaims the socket
+
 
 # ---------------------------------------------------------------------------
 # 6. Report generation
 # ---------------------------------------------------------------------------
-def generate_report(results: list[ExampleResult]) -> None:
-    """Print a formatted summary table and exit-code-friendly totals."""
-    col_name  = max((len(r.name) for r in results), default=20)
-    col_name  = max(col_name, 20)
+def generate_report(
+    results: list[ExampleResult],
+    examples: list[ExampleMetadata],
+    run_meta: dict,
+    output_json: str = "validation_report.json",
+) -> None:
+    """Print a formatted summary table and write a full JSON report."""
 
-    header = f"{'Example Name':<{col_name}}  {'Status':<8}  Notes"
+    passes   = sum(1 for r in results if r.status == STATUS_PASS)
+    fails    = sum(1 for r in results if r.status == STATUS_FAIL)
+    timeouts = sum(1 for r in results if r.status == STATUS_TIMEOUT)
+
+    # ── Console table ────────────────────────────────────────────────────────
+    col_name = max(max((len(r.name) for r in results), default=0), 20)
+    header   = f"{'Example Name':<{col_name}}  {'Status':<8}  Notes"
     print("\n" + "=" * (len(header) + 4))
     print(header)
     print("-" * (len(header) + 4))
-
-    passes   = 0
-    fails    = 0
-    timeouts = 0
-
     for r in results:
-        notes_str = r.notes[:60] if r.notes else ""
-        print(f"{r.name:<{col_name}}  {r.status:<8}  {notes_str}")
-        if r.status == STATUS_PASS:
-            passes += 1
-        elif r.status == STATUS_TIMEOUT:
-            timeouts += 1
-        else:
-            fails += 1
-
+        print(f"{r.name:<{col_name}}  {r.status:<8}  {r.notes[:60] if r.notes else ''}")
     print("=" * (len(header) + 4))
     print(f"\nTotal : {len(results)}")
     print(f"  {STATUS_PASS:<8}: {passes}")
     print(f"  {STATUS_FAIL:<8}: {fails}")
     print(f"  {STATUS_TIMEOUT:<8}: {timeouts}")
     print()
+
+    # ── Build JSON payload ───────────────────────────────────────────────────
+    meta_by_name = {m.name: m for m in examples}
+
+    report = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "run": run_meta,
+        "summary": {
+            "total":   len(results),
+            "passed":  passes,
+            "failed":  fails,
+            "timeout": timeouts,
+        },
+        "examples": [
+            {
+                "name":         r.name,
+                "status":       r.status,
+                "notes":        r.notes or None,
+                "path":         meta_by_name[r.name].path         if r.name in meta_by_name else None,
+                "run_command":  meta_by_name[r.name].run          if r.name in meta_by_name else None,
+                "port":         meta_by_name[r.name].port         if r.name in meta_by_name else None,
+                "maintainer":   meta_by_name[r.name].maintainer   if r.name in meta_by_name else None,
+                "mesa_version": meta_by_name[r.name].mesa_version if r.name in meta_by_name else None,
+                "requirements": meta_by_name[r.name].requirements if r.name in meta_by_name else None,
+            }
+            for r in results
+        ],
+    }
+
+    with open(output_json, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+
+    print(f"  JSON report saved to: {output_json}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -370,11 +509,14 @@ def main() -> int:
                         help="Max seconds per example (default: 10)")
     parser.add_argument("--skip-install", action="store_true",
                         help="Skip pip install step (useful if deps already present)")
+    parser.add_argument("--output-json", default="validation_report.json",
+                        help="Path for the JSON report output (default: validation_report.json)")
     args = parser.parse_args()
 
     print(f"mesa-examples Validator")
     print(f"  Examples dir : {args.examples_dir}")
-    print(f"  Timeout      : {args.timeout}s per example\n")
+    print(f"  Timeout      : {args.timeout}s per example")
+    print(f"  JSON output  : {args.output_json}\n")
 
     # ── Discover ─────────────────────────────────────────────────────────────
     examples = discover_examples(args.examples_dir)
@@ -405,7 +547,14 @@ def main() -> int:
         print()
 
     # ── Report ────────────────────────────────────────────────────────────────
-    generate_report(results)
+    run_meta = {
+        "examples_dir": args.examples_dir,
+        "timeout_seconds": args.timeout,
+        "skip_install": args.skip_install,
+        "python": sys.version,
+        "platform": sys.platform,
+    }
+    generate_report(results, examples, run_meta, output_json=args.output_json)
 
     # Non-zero exit if any example did not PASS
     any_failure = any(r.status != STATUS_PASS for r in results)

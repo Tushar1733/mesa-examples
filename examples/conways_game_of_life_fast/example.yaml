@@ -1,0 +1,7 @@
+name: conways_game_of_life_fast
+maintainer: your_username
+status: active
+mesa_version: ">=2.3"
+python: ">=3.10"
+requirements: requirements.txt
+run: solara run app.py

@@ -1,0 +1,4 @@
+networkx>=3.0
+solara>=1.0
+numpy>=1.24
+mesa>=3.0

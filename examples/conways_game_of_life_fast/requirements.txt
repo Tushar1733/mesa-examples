@@ -1,0 +1,3 @@
+Mesa >= 2.3
+NumPy 
+SciPy
