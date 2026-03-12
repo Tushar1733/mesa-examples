@@ -1,352 +1,595 @@
-# ============================================================================
-# mesa-examples CI Validation Workflow
-# ============================================================================
-# Validates every example in examples/ against two Mesa versions:
-#   declared  – the version pinned in each example's example.yaml
-#   latest    – the newest Mesa available on PyPI
-#
-# After validation:
-#   • Uploads JSON reports as artifacts
-#   • Automatically creates / updates GitHub Issues for broken examples
-# ============================================================================
+"""
+mesa-examples CI Validation Script
+====================================
+Discovers, installs, runs, and health-checks every example in the
+mesa-examples repository.  Designed for non-interactive GitHub Actions use.
 
-name: Validate Examples
+Usage
+-----
+    python validate_examples.py [--examples-dir examples] [--timeout 10]
 
-on:
-  push:
-    branches: ["main", "master"]
-    paths:
-      - "examples/**"
-      - "scripts/**"
-      - ".github/workflows/examples-ci.yml"
-  pull_request:
-    branches: ["main", "master"]
-    paths:
-      - "examples/**"
-      - "scripts/**"
-      - ".github/workflows/examples-ci.yml"
-  schedule:
-    # Every Sunday at 00:00 UTC
-    - cron: "0 0 * * 0"
-  workflow_dispatch:
-    # Allow manual trigger from the Actions tab
+Exit codes
+----------
+    0  – all examples passed
+    1  – one or more examples failed or timed-out
+"""
 
-# ── Concurrency: cancel in-progress runs on the same branch ─────────────────
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from typing import Optional
 
-jobs:
-  # ══════════════════════════════════════════════════════════════════════════
-  # JOB 1 — Run validator for each Mesa version
-  # ══════════════════════════════════════════════════════════════════════════
-  validate:
-    name: Validate (${{ matrix.mesa-version }} Mesa)
-    runs-on: ubuntu-latest
+import requests
+import yaml
 
-    strategy:
-      fail-fast: false          # run both matrix legs even if one fails
-      matrix:
-        mesa-version:
-          - declared            # install version from example.yaml
-          - latest              # install latest from PyPI
+# ---------------------------------------------------------------------------
+# Constants / defaults
+# ---------------------------------------------------------------------------
+EXAMPLES_DIR = "examples"
+DEFAULT_TIMEOUT = 30          # seconds per example (solara needs ~8-15s to boot)
+SERVER_BOOT_WAIT = 10         # seconds to wait before health-check
+# Each entry: (pattern_to_match, human-readable label)
+# Order matters — more specific patterns should come first.
+ERROR_PATTERNS: list[tuple[str, str]] = [
+    # ── Relative import (package structure issue) ────────────────────────────
+    ("attempted relative import with no known parent package", "ImportError: relative import"),
 
-    env:
-      REPORT_FILE: example_validation_results_${{ matrix.mesa-version }}.json
-      # headless display required for matplotlib / solara on Ubuntu
-      DISPLAY: ":99"
+    # ── Legacy Mesa API ──────────────────────────────────────────────────────
+    ("has no attribute 'visualization'",    "Legacy Mesa API: mesa.visualization removed"),
+    ("mesa.visualization",                  "Legacy Mesa API: mesa.visualization removed"),
+    ("ModularServer",                       "Legacy Mesa API: ModularServer removed"),
+    ("mesa runserver",                      "Legacy Mesa API: mesa runserver removed"),
 
-    steps:
-      # ── 1. Checkout ────────────────────────────────────────────────────────
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    # ── Incomplete model / NoneType space ────────────────────────────────────
+    ("Unknown space type: <class 'NoneType'>", "Incomplete model: space is None"),
+    ("raised exception ValueError",            "Component raised ValueError"),
+    ("Unknown space type",                     "Incomplete model: unknown space type"),
 
-      # ── 2. Python setup ────────────────────────────────────────────────────
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
+    # ── General Python errors ────────────────────────────────────────────────
+    ("AttributeError",          "AttributeError"),
+    ("ImportError",             "ImportError"),
+    ("ModuleNotFoundError",     "ModuleNotFoundError"),
+    ("ValueError",              "ValueError"),
+    ("RuntimeError",            "RuntimeError"),
+    ("TypeError",               "TypeError"),
+    ("NameError",               "NameError"),
+    ("Traceback (most recent",  "Unhandled exception (Traceback)"),
+]
 
-      # ── 3. Start virtual display (Xvfb) for headless rendering ────────────
-      - name: Start virtual display
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y xvfb
-          Xvfb :99 -screen 0 1280x1024x24 &
-          sleep 2
+STATUS_PASS    = "PASS"
+STATUS_FAIL    = "FAIL"
+STATUS_TIMEOUT = "TIMEOUT"
 
-      # ── 4. Install base dependencies ───────────────────────────────────────
-      - name: Install base dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install solara requests pyyaml
 
-      # ── 5. Install Mesa (version-matrix aware) ─────────────────────────────
-      - name: Install Mesa — declared versions
-        if: matrix.mesa-version == 'declared'
-        run: |
-          echo "Installing each example's declared Mesa version..."
-          python - << 'EOF'
-          import os, glob, yaml
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+@dataclass
+class ExampleMetadata:
+    name: str
+    path: str
+    requirements: Optional[str] = None
+    run: Optional[str] = None
+    port: int = 8765
+    status: Optional[str] = None
+    maintainer: Optional[str] = None
+    mesa_version: Optional[str] = None
+    python: Optional[str] = None
 
-          seen = set()
-          for path in glob.glob("examples/**/example.yaml", recursive=True):
-              with open(path) as f:
-                  meta = yaml.safe_load(f) or {}
-              ver = str(meta.get("mesa_version", "")).strip()
-              if ver and ver not in seen:
-                  seen.add(ver)
-                  spec = f"mesa{ver}" if ver.startswith(("=","~",">","<","!")) else f"mesa=={ver}"
-                  print(f"  Installing {spec} (from {path})")
-                  os.system(f"pip install '{spec}' --quiet")
 
-          if not seen:
-              print("No mesa_version found in any example.yaml — installing latest.")
-              os.system("pip install mesa --quiet")
-          EOF
+@dataclass
+class ExampleResult:
+    name: str
+    status: str
+    notes: str = ""
 
-      - name: Install Mesa — latest from PyPI
-        if: matrix.mesa-version == 'latest'
-        run: |
-          echo "Installing latest Mesa from PyPI..."
-          pip install --upgrade mesa
 
-      # ── 6. Show installed Mesa version ─────────────────────────────────────
-      - name: Show Mesa version
-        run: python -c "import mesa; print('Mesa version:', mesa.__version__)"
+# ---------------------------------------------------------------------------
+# 1. Discovery
+# ---------------------------------------------------------------------------
+def discover_examples(examples_dir: str = EXAMPLES_DIR) -> list[ExampleMetadata]:
+    """Recursively find all directories containing example.yaml."""
+    found: list[ExampleMetadata] = []
+    for root, _dirs, files in os.walk(examples_dir):
+        if "example.yaml" in files:
+            meta = load_metadata(root)
+            if meta:
+                found.append(meta)
+    return found
 
-      # ── 7. Run validator ───────────────────────────────────────────────────
-      - name: Run example validator
-        id: validate
-        # continue even on failure so we can upload the report + create issues
-        continue-on-error: true
-        run: |
-          python scripts/read_examples.py \
-            --output-json "${{ env.REPORT_FILE }}" \
-            --timeout 30
-        env:
-          PYTHONDONTWRITEBYTECODE: "1"
-          # Pass mesa-version label into run metadata via env (picked up by script)
-          MESA_VERSION_LABEL: ${{ matrix.mesa-version }}
 
-      # ── 8. Upload JSON report as artifact ──────────────────────────────────
-      - name: Upload validation report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: validation-report-${{ matrix.mesa-version }}
-          path: ${{ env.REPORT_FILE }}
-          retention-days: 30
+# ---------------------------------------------------------------------------
+# 2. Metadata loading
+# ---------------------------------------------------------------------------
+def load_metadata(example_path: str) -> Optional[ExampleMetadata]:
+    """Parse example.yaml and return an ExampleMetadata object."""
+    yaml_path = os.path.join(example_path, "example.yaml")
+    try:
+        with open(yaml_path, "r") as fh:
+            raw: dict = yaml.safe_load(fh) or {}
+    except Exception as exc:
+        print(f"  [WARN] Could not read {yaml_path}: {exc}")
+        return None
 
-      # ── 9. Print summary to job log ────────────────────────────────────────
-      - name: Print report summary
-        if: always()
-        run: |
-          python - << 'EOF'
-          import json, os, sys
+    return ExampleMetadata(
+        name=raw.get("name", os.path.basename(example_path)),
+        path=example_path,
+        requirements=raw.get("requirements"),
+        run=raw.get("run"),
+        port=int(raw.get("port", 8765)),
+        maintainer=raw.get("maintainer"),
+        mesa_version=str(raw.get("mesa_version", "")),
+        python=str(raw.get("python", "")),
+    )
 
-          report_file = os.environ["REPORT_FILE"]
-          if not os.path.exists(report_file):
-              print("Report file not found — validator may have crashed.")
-              sys.exit(0)
 
-          with open(report_file) as f:
-              report = json.load(f)
+# ---------------------------------------------------------------------------
+# 3. Dependency installation
+# ---------------------------------------------------------------------------
+# Packages that should never be reinstalled from PyPI during CI validation.
+# mesa is developed in-repo; reinstalling a pinned version would overwrite it.
+# matplotlib, solara, etc. are assumed already present in the CI environment.
+SKIP_PACKAGES = {"mesa", "matplotlib", "solara"}
 
-          s = report["summary"]
-          print(f"\n{'='*50}")
-          print(f"Mesa version : {os.environ.get('MESA_VERSION_LABEL','?')}")
-          print(f"Total        : {s['total']}")
-          print(f"  PASS       : {s['passed']}")
-          print(f"  FAIL       : {s['failed']}")
-          print(f"  TIMEOUT    : {s['timeout']}")
-          print(f"{'='*50}")
 
-          for ex in report.get("examples", []):
-              status = ex["status"]
-              icon   = "[PASS]" if status == "PASS" else ("[TIME]" if status == "TIMEOUT" else "[FAIL]")
-              notes  = f"  {ex['notes']}" if ex.get("notes") else ""
-              print(f"  {icon}  {ex['name']}{notes}")
-          EOF
-        env:
-          REPORT_FILE: ${{ env.REPORT_FILE }}
-          MESA_VERSION_LABEL: ${{ matrix.mesa-version }}
+def _filter_requirements(req_file: str) -> list[str]:
+    """
+    Read a requirements.txt and return only the lines that should be installed.
+    Skips blank lines, comments, and any package in SKIP_PACKAGES.
+    """
+    kept: list[str] = []
+    with open(req_file, "r") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Extract the bare package name (before any version specifier)
+            pkg_name = line.split("~=")[0].split("==")[0].split(">=")[0]                            .split("<=")[0].split("!=")[0].split(">")[0]                            .split("<")[0].split("[")[0].strip().lower()
+            if pkg_name in SKIP_PACKAGES:
+                print(f"    Skipping {line!r} (provided by repo/environment)")
+                continue
+            kept.append(line)
+    return kept
 
-  # ══════════════════════════════════════════════════════════════════════════
-  # JOB 2 — Compare results and create/update GitHub Issues
-  # Only runs after both matrix legs complete; only on push/schedule (not PRs)
-  # ══════════════════════════════════════════════════════════════════════════
-  triage:
-    name: Triage results and create issues
-    runs-on: ubuntu-latest
-    needs: validate
-    if: |
-      always() &&
-      github.event_name != 'pull_request' &&
-      needs.validate.result != 'skipped'
 
-    permissions:
-      issues: write
-      contents: read
+def install_dependencies(meta: ExampleMetadata) -> tuple[bool, str]:
+    """
+    Install requirements listed in metadata, skipping repo-managed packages.
+    Returns (success, error_message).
+    """
+    if not meta.requirements:
+        return True, ""
 
-    steps:
-      # ── 1. Checkout (needed for gh CLI context) ────────────────────────────
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    req_file = os.path.join(meta.path, meta.requirements)
+    if not os.path.isfile(req_file):
+        return False, f"requirements file not found: {req_file}"
 
-      # ── 2. Download both reports ───────────────────────────────────────────
-      - name: Download declared report
-        uses: actions/download-artifact@v4
-        with:
-          name: validation-report-declared
-          path: reports/
-        continue-on-error: true   # report may be absent if that leg crashed
+    packages = _filter_requirements(req_file)
 
-      - name: Download latest report
-        uses: actions/download-artifact@v4
-        with:
-          name: validation-report-latest
-          path: reports/
-        continue-on-error: true
+    if not packages:
+        print(f"  No external dependencies to install for {meta.name}.")
+        return True, ""
 
-      # ── 3. Triage and create/update issues ────────────────────────────────
-      - name: Triage results and manage issues
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DECLARED_REPORT: reports/example_validation_results_declared.json
-          LATEST_REPORT:   reports/example_validation_results_latest.json
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          python - << 'PYEOF'
-          import json, os, subprocess, sys
+    print(f"  Installing {len(packages)} dependenc{'y' if len(packages)==1 else 'ies'} from {req_file} …")
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", *packages, "--quiet"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return False, f"pip install failed: {result.stderr.strip()[:300]}"
+    return True, ""
 
-          declared_path = os.environ["DECLARED_REPORT"]
-          latest_path   = os.environ["LATEST_REPORT"]
-          run_url       = os.environ["RUN_URL"]
 
-          def load_report(path: str) -> dict:
-              if not os.path.exists(path):
-                  print(f"  [WARN] Report not found: {path}")
-                  return {}
-              with open(path) as f:
-                  return json.load(f)
+# Legacy run commands that no longer exist in modern Mesa
+LEGACY_COMMANDS: list[tuple[tuple, str]] = [
+    (("mesa", "runserver"), "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'"),
+    (("mesa",),             "Legacy Mesa API: mesa CLI removed - migrate to 'solara run app.py'"),
+]
 
-          def status_map(report: dict) -> dict[str, dict]:
-              """Return {example_name: example_record} from a report."""
-              return {ex["name"]: ex for ex in report.get("examples", [])}
 
-          declared = load_report(declared_path)
-          latest   = load_report(latest_path)
+# ---------------------------------------------------------------------------
+# 4 & 5. Execution + health-check
+# ---------------------------------------------------------------------------
+def _build_command(run_cmd: str) -> list[str]:
+    """
+    Convert the run string from metadata into a list suitable for Popen.
+    Raises ValueError with a clear message for known legacy commands.
+    """
+    parts = run_cmd.strip().split()
+    for legacy_parts, message in LEGACY_COMMANDS:
+        if tuple(parts[:len(legacy_parts)]) == legacy_parts:
+            raise ValueError(message)
+    return parts
 
-          d_map = status_map(declared)
-          l_map = status_map(latest)
 
-          all_names = sorted(set(d_map) | set(l_map))
+def detect_errors(text: str) -> Optional[str]:
+    """
+    Scan output text for known error patterns.
+    Returns a human-readable label for the first match, or None.
+    """
+    for pattern, label in ERROR_PATTERNS:
+        if pattern in text:
+            return label
+    return None
 
-          # ── Label definitions ──────────────────────────────────────────────
-          # PASS declared + PASS latest  → example:healthy      (close open issues)
-          # PASS declared + FAIL latest  → example:needs-upgrade
-          # FAIL declared                → example:broken
-          # ──────────────────────────────────────────────────────────────────
 
-          def gh(*args):
-              """Run a gh CLI command, return stdout."""
-              result = subprocess.run(
-                  ["gh"] + list(args),
-                  capture_output=True, text=True
-              )
-              return result.stdout.strip(), result.returncode
+def check_server(port: int, retries: int = 5, delay: float = 1.0) -> bool:
+    """
+    Send an HTTP GET to localhost:<port>.
+    Returns True if any attempt gets a 200 response.
+    Each attempt has a short timeout so we don't burn the example deadline.
+    """
+    url = f"http://localhost:{port}"
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.get(url, timeout=3)
+            if resp.status_code == 200:
+                return True
+        except requests.RequestException:
+            pass
+        if attempt < retries:
+            time.sleep(delay)
+    return False
 
-          def ensure_label(label: str, color: str, description: str):
-              out, rc = gh("label", "list", "--json", "name", "-q", f'.[].name')
-              if label not in out.split("\n"):
-                  gh("label", "create", label,
-                     "--color", color,
-                     "--description", description)
 
-          # Ensure labels exist
-          ensure_label("example:healthy",       "0e8a16", "Example passes all Mesa version checks")
-          ensure_label("example:needs-upgrade", "e4e669", "Example passes declared Mesa but fails latest")
-          ensure_label("example:broken",        "d73a4a", "Example fails even on its declared Mesa version")
+def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> ExampleResult:
+    """
+    Start the example process, wait for boot, health-check, then terminate.
+    Returns an ExampleResult.
+    """
+    if not meta.run:
+        return ExampleResult(name=meta.name, status=STATUS_FAIL, notes="No run command in metadata")
 
-          for name in all_names:
-              d_status = d_map.get(name, {}).get("status", "UNKNOWN")
-              l_status = l_map.get(name, {}).get("status", "UNKNOWN")
-              d_notes  = d_map.get(name, {}).get("notes") or ""
-              l_notes  = l_map.get(name, {}).get("notes") or ""
-              maintainer = (d_map.get(name) or l_map.get(name) or {}).get("maintainer") or "unknown"
+    try:
+        cmd = _build_command(meta.run)
+    except ValueError as exc:
+        return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=str(exc))
 
-              # Classify
-              if d_status == "PASS" and l_status == "PASS":
-                  label = "example:healthy"
-                  is_healthy = True
-              elif d_status == "PASS" and l_status != "PASS":
-                  label = "example:needs-upgrade"
-                  is_healthy = False
-              else:
-                  label = "example:broken"
-                  is_healthy = False
+    print(f"  Running: {' '.join(cmd)}")
 
-              # Find existing open issue for this example
-              search_out, _ = gh(
-                  "issue", "list",
-                  "--state", "open",
-                  "--json", "number,title,labels",
-                  "--jq", f'[.[] | select(.title | contains("{name}"))] | .[0].number'
-              )
-              existing_issue = search_out.strip() if search_out.strip().isdigit() else None
+    try:
+        process = subprocess.Popen(
+            cmd,
+            cwd=meta.path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            # shell=True is needed on Windows so that script wrappers like
+            # solara.cmd / solara.exe are resolved via PATH correctly.
+            shell=(sys.platform == "win32"),
+        )
+    except FileNotFoundError:
+        # Fallback: retry with shell=True (covers edge cases on all platforms)
+        try:
+            process = subprocess.Popen(
+                " ".join(cmd),
+                cwd=meta.path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                shell=True,
+            )
+        except Exception:
+            if cmd and cmd[0] == "mesa":
+                return ExampleResult(name=meta.name, status=STATUS_FAIL,
+                    notes="Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'")
+            return ExampleResult(name=meta.name, status=STATUS_FAIL,
+                notes=f"Command not found: '{cmd[0]}' is not installed or not on PATH")
+    except Exception as exc:
+        return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=str(exc))
 
-              if is_healthy:
-                  # Close any existing issue and label healthy
-                  if existing_issue:
-                      print(f"  [OK] {name} is healthy — closing issue #{existing_issue}")
-                      gh("issue", "close", existing_issue,
-                         "--comment", f"Example `{name}` now passes all Mesa version checks. Closing automatically.")
-                      gh("issue", "edit", existing_issue, "--add-label", "example:healthy")
-                  continue
+    # ── Steps 2-4: Drain output in background threads while waiting ─────────
+    import threading
 
-              # Build issue body for broken / needs-upgrade
-              if label == "example:broken":
-                  title   = f"Example `{name}` failing on declared Mesa version"
-                  summary = f"This example **fails on its own declared Mesa version**, which means it is broken and needs immediate attention."
-              else:
-                  title   = f"Example `{name}` failing on latest Mesa"
-                  summary = f"This example passes its declared Mesa version but **fails on the latest Mesa**, indicating it needs to be updated."
+    deadline = time.time() + timeout
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
 
-              body = f"""## {title}
+    def drain(stream, bucket: list):
+        try:
+            for line in stream:
+                bucket.append(line)
+        except Exception:
+            pass
 
-          **Maintainer:** {maintainer}
-          **Classification:** `{label}`
+    t_out = threading.Thread(target=drain, args=(process.stdout, stdout_lines), daemon=True)
+    t_err = threading.Thread(target=drain, args=(process.stderr, stderr_lines), daemon=True)
+    t_out.start()
+    t_err.start()
 
-          {summary}
+    # Poll every 0.5s during boot window; catch errors as soon as they appear
+    poll_interval = 0.5
+    elapsed = 0.0
+    while elapsed < SERVER_BOOT_WAIT:
+        time.sleep(poll_interval)
+        elapsed += poll_interval
 
-          | Mesa Version | Status | Notes |
-          |---|---|---|
-          | declared | `{d_status}` | {d_notes or '—'} |
-          | latest   | `{l_status}` | {l_notes or '—'} |
+        combined = "".join(stdout_lines) + "".join(stderr_lines)
+        err_match = detect_errors(combined)
+        if err_match:
+            _terminate(process, meta.port)
+            t_out.join(timeout=2)
+            t_err.join(timeout=2)
+            return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=err_match)
 
-          **CI Run:** {run_url}
+        if process.poll() is not None:
+            # Process already exited — wait for drain threads to flush all output
+            process.wait()          # ensure pipes are fully closed
+            t_out.join(timeout=3)
+            t_err.join(timeout=3)
+            # Give a tiny extra window in case OS buffers are still flushing
+            time.sleep(0.2)
+            combined = "".join(stdout_lines) + "".join(stderr_lines)
+            err_match = detect_errors(combined)
+            note = err_match if err_match else f"Process exited early (code {process.returncode})"
+            return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=note)
 
-          ---
-          *This issue was automatically created by the mesa-examples CI validator.*
-          *It will be closed automatically once the example passes all checks.*
-          """
+    # ── Step 4b: Final error scan before health-check ───────────────────────
+    # One last drain in case the process just exited at the end of the boot window
+    if process.poll() is not None:
+        process.wait()
+        t_out.join(timeout=3)
+        t_err.join(timeout=3)
+        time.sleep(0.2)
+        combined = "".join(stdout_lines) + "".join(stderr_lines)
+        err_match = detect_errors(combined)
+        note = err_match if err_match else f"Process exited early (code {process.returncode})"
+        return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=note)
 
-              if existing_issue:
-                  print(f"  [UPDATE] {name} → updating issue #{existing_issue} ({label})")
-                  gh("issue", "edit", existing_issue,
-                     "--title", title,
-                     "--body", body,
-                     "--add-label", label)
-                  gh("issue", "comment", existing_issue,
-                     "--body", f"Issue updated by CI run: {run_url}")
-              else:
-                  print(f"  [CREATE] {name} → creating issue ({label})")
-                  gh("issue", "create",
-                     "--title", title,
-                     "--body", body,
-                     "--label", label)
+    # ── Step 5: HTTP health-check ────────────────────────────────────────────
+    if time.time() >= deadline:
+        _terminate(process, meta.port)
+        # Even on timeout, check if there are error messages in captured output
+        t_out.join(timeout=2)
+        t_err.join(timeout=2)
+        combined = "".join(stdout_lines) + "".join(stderr_lines)
+        err_match = detect_errors(combined)
+        if err_match:
+            return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=err_match)
+        return ExampleResult(name=meta.name, status=STATUS_TIMEOUT, notes="Timed out before health-check")
 
-          print("\nTriage complete.")
-          PYEOF
+    server_ok = check_server(meta.port)
+
+    # ── Step 6: Terminate ────────────────────────────────────────────────────
+    _terminate(process, meta.port)
+    t_out.join(timeout=2)
+    t_err.join(timeout=2)
+
+    if server_ok:
+        return ExampleResult(name=meta.name, status=STATUS_PASS)
+
+    if time.time() >= deadline:
+        return ExampleResult(name=meta.name, status=STATUS_TIMEOUT)
+
+    return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=f"Server did not respond on port {meta.port}")
+
+
+def _kill_port(port: int) -> None:
+    """Force-kill any process still listening on the given port (cross-platform)."""
+    import signal as _signal
+
+    if sys.platform == "win32":
+        try:
+            # netstat -ano lists PID for each connection
+            out = subprocess.check_output(
+                ["netstat", "-ano"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            for line in out.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.strip().split()
+                    pid = int(parts[-1])
+                    subprocess.call(
+                        ["taskkill", "/F", "/PID", str(pid)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+        except Exception:
+            pass
+    else:
+        try:
+            out = subprocess.check_output(
+                ["lsof", "-ti", f"tcp:{port}"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            for pid_str in out.strip().splitlines():
+                try:
+                    os.kill(int(pid_str), _signal.SIGKILL)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+
+def _terminate(process: subprocess.Popen, port: int = 0) -> None:
+    """Cleanly terminate a process, all its children, and free the port."""
+    try:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+    except Exception:
+        pass
+
+    # Kill child processes on POSIX
+    try:
+        import signal, os
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+    except Exception:
+        pass
+
+    # Ensure the port is free regardless of what happened above
+    if port:
+        _kill_port(port)
+        time.sleep(0.5)  # brief pause so the OS reclaims the socket
+
+
+# ---------------------------------------------------------------------------
+# 6. Report generation
+# ---------------------------------------------------------------------------
+def generate_report(
+    results: list[ExampleResult],
+    examples: list[ExampleMetadata],
+    run_meta: dict,
+    output_json: str = "validation_report.json",
+) -> None:
+    """Print a formatted summary table and write a full JSON report."""
+
+    passes   = sum(1 for r in results if r.status == STATUS_PASS)
+    fails    = sum(1 for r in results if r.status == STATUS_FAIL)
+    timeouts = sum(1 for r in results if r.status == STATUS_TIMEOUT)
+
+    # ── Console table ────────────────────────────────────────────────────────
+    col_name = max(max((len(r.name) for r in results), default=0), 20)
+    header   = f"{'Example Name':<{col_name}}  {'Status':<8}  Notes"
+    print("\n" + "=" * (len(header) + 4))
+    print(header)
+    print("-" * (len(header) + 4))
+    for r in results:
+        print(f"{r.name:<{col_name}}  {r.status:<8}  {r.notes[:60] if r.notes else ''}")
+    print("=" * (len(header) + 4))
+    print(f"\nTotal : {len(results)}")
+    print(f"  {STATUS_PASS:<8}: {passes}")
+    print(f"  {STATUS_FAIL:<8}: {fails}")
+    print(f"  {STATUS_TIMEOUT:<8}: {timeouts}")
+    print()
+
+    # ── Build JSON payload ───────────────────────────────────────────────────
+    meta_by_name = {m.name: m for m in examples}
+
+    report = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "run": run_meta,
+        "summary": {
+            "total":   len(results),
+            "passed":  passes,
+            "failed":  fails,
+            "timeout": timeouts,
+        },
+        "examples": [
+            {
+                "name":         r.name,
+                "status":       r.status,
+                "notes":        r.notes or None,
+                "path":         meta_by_name[r.name].path         if r.name in meta_by_name else None,
+                "run_command":  meta_by_name[r.name].run          if r.name in meta_by_name else None,
+                "port":         meta_by_name[r.name].port         if r.name in meta_by_name else None,
+                "maintainer":   meta_by_name[r.name].maintainer   if r.name in meta_by_name else None,
+                "mesa_version": meta_by_name[r.name].mesa_version if r.name in meta_by_name else None,
+                "requirements": meta_by_name[r.name].requirements if r.name in meta_by_name else None,
+            }
+            for r in results
+        ],
+    }
+
+    with open(output_json, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+
+    print(f"  JSON report saved to: {output_json}\n")
+
+
+# ---------------------------------------------------------------------------
+# Main orchestration
+# ---------------------------------------------------------------------------
+def _resolve_output_path(cli_value):
+    """
+    Determine the JSON report output path and mesa mode label.
+
+    Precedence (highest to lowest):
+      1. --output-json CLI argument  (explicit override)
+      2. MESA_VERSION_LABEL env var  (set by GitHub Actions matrix)
+      3. Hardcoded default           (local runs)
+
+    Returns (output_path, mesa_label).
+    """
+    mesa_label = os.getenv("MESA_VERSION_LABEL", "").strip()
+
+    if cli_value:
+        # Explicit CLI flag always wins
+        return cli_value, mesa_label or "local"
+
+    if mesa_label:
+        return f"example_validation_results_{mesa_label}.json", mesa_label
+
+    return "example_validation_results.json", "local"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Validate mesa-examples in CI")
+    parser.add_argument("--examples-dir", default=EXAMPLES_DIR,
+                        help="Root directory containing examples (default: examples)")
+    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
+                        help="Max seconds per example (default: 30)")
+    parser.add_argument("--skip-install", action="store_true",
+                        help="Skip pip install step (useful if deps already present)")
+    parser.add_argument("--output-json", default=None,
+                        help="Override report path (default: auto-named from MESA_VERSION_LABEL)")
+    args = parser.parse_args()
+
+    # ── Resolve output path: CLI > MESA_VERSION_LABEL env var > default ───────
+    output_json, mesa_label = _resolve_output_path(args.output_json)
+
+    print("mesa-examples Validator")
+    print(f"  Examples dir      : {args.examples_dir}")
+    print(f"  Timeout           : {args.timeout}s per example")
+    print(f"  JSON output       : {output_json}")
+    if mesa_label != "local":
+        print(f"  Mesa validation mode: {mesa_label}")
+    print()
+
+    # ── Discover ─────────────────────────────────────────────────────────────
+    examples = discover_examples(args.examples_dir)
+    print(f"Found {len(examples)} example(s).\n")
+
+    if not examples:
+        print("No examples found. Exiting.")
+        return 0
+
+    results: list[ExampleResult] = []
+
+    for meta in examples:
+        print(f"[ {meta.name} ]  ({meta.path})")
+
+        # ── Install deps ──────────────────────────────────────────────────────
+        if not args.skip_install:
+            ok, err = install_dependencies(meta)
+            if not ok:
+                print(f"  Dependency install failed: {err}")
+                results.append(ExampleResult(name=meta.name, status=STATUS_FAIL, notes=err))
+                continue
+
+        # ── Run & validate ────────────────────────────────────────────────────
+        result = run_example(meta, timeout=args.timeout)
+        icon = "PASS" if result.status == STATUS_PASS else ("TIME" if result.status == STATUS_TIMEOUT else "FAIL")
+        print(f"  [{icon}]" + (f"  {result.notes}" if result.notes else ""))
+        results.append(result)
+        print()
+
+    # ── Report ────────────────────────────────────────────────────────────────
+    run_meta = {
+        "examples_dir":       args.examples_dir,
+        "timeout_seconds":    args.timeout,
+        "skip_install":       args.skip_install,
+        "mesa_version_label": mesa_label,
+        "python":             sys.version,
+        "platform":           sys.platform,
+    }
+    generate_report(results, examples, run_meta, output_json=output_json)
+
+    # Non-zero exit if any example did not PASS
+    any_failure = any(r.status != STATUS_PASS for r in results)
+    return 1 if any_failure else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
