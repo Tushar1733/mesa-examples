@@ -1,0 +1,352 @@
+# ============================================================================
+# mesa-examples CI Validation Workflow
+# ============================================================================
+# Validates every example in examples/ against two Mesa versions:
+#   declared  – the version pinned in each example's example.yaml
+#   latest    – the newest Mesa available on PyPI
+#
+# After validation:
+#   • Uploads JSON reports as artifacts
+#   • Automatically creates / updates GitHub Issues for broken examples
+# ============================================================================
+
+name: Validate Examples
+
+on:
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "examples/**"
+      - "scripts/**"
+      - ".github/workflows/examples-ci.yml"
+  pull_request:
+    branches: ["main", "master"]
+    paths:
+      - "examples/**"
+      - "scripts/**"
+      - ".github/workflows/examples-ci.yml"
+  schedule:
+    # Every Sunday at 00:00 UTC
+    - cron: "0 0 * * 0"
+  workflow_dispatch:
+    # Allow manual trigger from the Actions tab
+
+# ── Concurrency: cancel in-progress runs on the same branch ─────────────────
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 1 — Run validator for each Mesa version
+  # ══════════════════════════════════════════════════════════════════════════
+  validate:
+    name: Validate (${{ matrix.mesa-version }} Mesa)
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false          # run both matrix legs even if one fails
+      matrix:
+        mesa-version:
+          - declared            # install version from example.yaml
+          - latest              # install latest from PyPI
+
+    env:
+      REPORT_FILE: example_validation_results_${{ matrix.mesa-version }}.json
+      # headless display required for matplotlib / solara on Ubuntu
+      DISPLAY: ":99"
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Python setup ────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # ── 3. Start virtual display (Xvfb) for headless rendering ────────────
+      - name: Start virtual display
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb
+          Xvfb :99 -screen 0 1280x1024x24 &
+          sleep 2
+
+      # ── 4. Install base dependencies ───────────────────────────────────────
+      - name: Install base dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install solara requests pyyaml
+
+      # ── 5. Install Mesa (version-matrix aware) ─────────────────────────────
+      - name: Install Mesa — declared versions
+        if: matrix.mesa-version == 'declared'
+        run: |
+          echo "Installing each example's declared Mesa version..."
+          python - << 'EOF'
+          import os, glob, yaml
+
+          seen = set()
+          for path in glob.glob("examples/**/example.yaml", recursive=True):
+              with open(path) as f:
+                  meta = yaml.safe_load(f) or {}
+              ver = str(meta.get("mesa_version", "")).strip()
+              if ver and ver not in seen:
+                  seen.add(ver)
+                  spec = f"mesa{ver}" if ver.startswith(("=","~",">","<","!")) else f"mesa=={ver}"
+                  print(f"  Installing {spec} (from {path})")
+                  os.system(f"pip install '{spec}' --quiet")
+
+          if not seen:
+              print("No mesa_version found in any example.yaml — installing latest.")
+              os.system("pip install mesa --quiet")
+          EOF
+
+      - name: Install Mesa — latest from PyPI
+        if: matrix.mesa-version == 'latest'
+        run: |
+          echo "Installing latest Mesa from PyPI..."
+          pip install --upgrade mesa
+
+      # ── 6. Show installed Mesa version ─────────────────────────────────────
+      - name: Show Mesa version
+        run: python -c "import mesa; print('Mesa version:', mesa.__version__)"
+
+      # ── 7. Run validator ───────────────────────────────────────────────────
+      - name: Run example validator
+        id: validate
+        # continue even on failure so we can upload the report + create issues
+        continue-on-error: true
+        run: |
+          python scripts/read_examples.py \
+            --output-json "${{ env.REPORT_FILE }}" \
+            --timeout 30
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          # Pass mesa-version label into run metadata via env (picked up by script)
+          MESA_VERSION_LABEL: ${{ matrix.mesa-version }}
+
+      # ── 8. Upload JSON report as artifact ──────────────────────────────────
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-report-${{ matrix.mesa-version }}
+          path: ${{ env.REPORT_FILE }}
+          retention-days: 30
+
+      # ── 9. Print summary to job log ────────────────────────────────────────
+      - name: Print report summary
+        if: always()
+        run: |
+          python - << 'EOF'
+          import json, os, sys
+
+          report_file = os.environ["REPORT_FILE"]
+          if not os.path.exists(report_file):
+              print("Report file not found — validator may have crashed.")
+              sys.exit(0)
+
+          with open(report_file) as f:
+              report = json.load(f)
+
+          s = report["summary"]
+          print(f"\n{'='*50}")
+          print(f"Mesa version : {os.environ.get('MESA_VERSION_LABEL','?')}")
+          print(f"Total        : {s['total']}")
+          print(f"  PASS       : {s['passed']}")
+          print(f"  FAIL       : {s['failed']}")
+          print(f"  TIMEOUT    : {s['timeout']}")
+          print(f"{'='*50}")
+
+          for ex in report.get("examples", []):
+              status = ex["status"]
+              icon   = "[PASS]" if status == "PASS" else ("[TIME]" if status == "TIMEOUT" else "[FAIL]")
+              notes  = f"  {ex['notes']}" if ex.get("notes") else ""
+              print(f"  {icon}  {ex['name']}{notes}")
+          EOF
+        env:
+          REPORT_FILE: ${{ env.REPORT_FILE }}
+          MESA_VERSION_LABEL: ${{ matrix.mesa-version }}
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 2 — Compare results and create/update GitHub Issues
+  # Only runs after both matrix legs complete; only on push/schedule (not PRs)
+  # ══════════════════════════════════════════════════════════════════════════
+  triage:
+    name: Triage results and create issues
+    runs-on: ubuntu-latest
+    needs: validate
+    if: |
+      always() &&
+      github.event_name != 'pull_request' &&
+      needs.validate.result != 'skipped'
+
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      # ── 1. Checkout (needed for gh CLI context) ────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Download both reports ───────────────────────────────────────────
+      - name: Download declared report
+        uses: actions/download-artifact@v4
+        with:
+          name: validation-report-declared
+          path: reports/
+        continue-on-error: true   # report may be absent if that leg crashed
+
+      - name: Download latest report
+        uses: actions/download-artifact@v4
+        with:
+          name: validation-report-latest
+          path: reports/
+        continue-on-error: true
+
+      # ── 3. Triage and create/update issues ────────────────────────────────
+      - name: Triage results and manage issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DECLARED_REPORT: reports/example_validation_results_declared.json
+          LATEST_REPORT:   reports/example_validation_results_latest.json
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python - << 'PYEOF'
+          import json, os, subprocess, sys
+
+          declared_path = os.environ["DECLARED_REPORT"]
+          latest_path   = os.environ["LATEST_REPORT"]
+          run_url       = os.environ["RUN_URL"]
+
+          def load_report(path: str) -> dict:
+              if not os.path.exists(path):
+                  print(f"  [WARN] Report not found: {path}")
+                  return {}
+              with open(path) as f:
+                  return json.load(f)
+
+          def status_map(report: dict) -> dict[str, dict]:
+              """Return {example_name: example_record} from a report."""
+              return {ex["name"]: ex for ex in report.get("examples", [])}
+
+          declared = load_report(declared_path)
+          latest   = load_report(latest_path)
+
+          d_map = status_map(declared)
+          l_map = status_map(latest)
+
+          all_names = sorted(set(d_map) | set(l_map))
+
+          # ── Label definitions ──────────────────────────────────────────────
+          # PASS declared + PASS latest  → example:healthy      (close open issues)
+          # PASS declared + FAIL latest  → example:needs-upgrade
+          # FAIL declared                → example:broken
+          # ──────────────────────────────────────────────────────────────────
+
+          def gh(*args):
+              """Run a gh CLI command, return stdout."""
+              result = subprocess.run(
+                  ["gh"] + list(args),
+                  capture_output=True, text=True
+              )
+              return result.stdout.strip(), result.returncode
+
+          def ensure_label(label: str, color: str, description: str):
+              out, rc = gh("label", "list", "--json", "name", "-q", f'.[].name')
+              if label not in out.split("\n"):
+                  gh("label", "create", label,
+                     "--color", color,
+                     "--description", description)
+
+          # Ensure labels exist
+          ensure_label("example:healthy",       "0e8a16", "Example passes all Mesa version checks")
+          ensure_label("example:needs-upgrade", "e4e669", "Example passes declared Mesa but fails latest")
+          ensure_label("example:broken",        "d73a4a", "Example fails even on its declared Mesa version")
+
+          for name in all_names:
+              d_status = d_map.get(name, {}).get("status", "UNKNOWN")
+              l_status = l_map.get(name, {}).get("status", "UNKNOWN")
+              d_notes  = d_map.get(name, {}).get("notes") or ""
+              l_notes  = l_map.get(name, {}).get("notes") or ""
+              maintainer = (d_map.get(name) or l_map.get(name) or {}).get("maintainer") or "unknown"
+
+              # Classify
+              if d_status == "PASS" and l_status == "PASS":
+                  label = "example:healthy"
+                  is_healthy = True
+              elif d_status == "PASS" and l_status != "PASS":
+                  label = "example:needs-upgrade"
+                  is_healthy = False
+              else:
+                  label = "example:broken"
+                  is_healthy = False
+
+              # Find existing open issue for this example
+              search_out, _ = gh(
+                  "issue", "list",
+                  "--state", "open",
+                  "--json", "number,title,labels",
+                  "--jq", f'[.[] | select(.title | contains("{name}"))] | .[0].number'
+              )
+              existing_issue = search_out.strip() if search_out.strip().isdigit() else None
+
+              if is_healthy:
+                  # Close any existing issue and label healthy
+                  if existing_issue:
+                      print(f"  [OK] {name} is healthy — closing issue #{existing_issue}")
+                      gh("issue", "close", existing_issue,
+                         "--comment", f"Example `{name}` now passes all Mesa version checks. Closing automatically.")
+                      gh("issue", "edit", existing_issue, "--add-label", "example:healthy")
+                  continue
+
+              # Build issue body for broken / needs-upgrade
+              if label == "example:broken":
+                  title   = f"Example `{name}` failing on declared Mesa version"
+                  summary = f"This example **fails on its own declared Mesa version**, which means it is broken and needs immediate attention."
+              else:
+                  title   = f"Example `{name}` failing on latest Mesa"
+                  summary = f"This example passes its declared Mesa version but **fails on the latest Mesa**, indicating it needs to be updated."
+
+              body = f"""## {title}
+
+          **Maintainer:** {maintainer}
+          **Classification:** `{label}`
+
+          {summary}
+
+          | Mesa Version | Status | Notes |
+          |---|---|---|
+          | declared | `{d_status}` | {d_notes or '—'} |
+          | latest   | `{l_status}` | {l_notes or '—'} |
+
+          **CI Run:** {run_url}
+
+          ---
+          *This issue was automatically created by the mesa-examples CI validator.*
+          *It will be closed automatically once the example passes all checks.*
+          """
+
+              if existing_issue:
+                  print(f"  [UPDATE] {name} → updating issue #{existing_issue} ({label})")
+                  gh("issue", "edit", existing_issue,
+                     "--title", title,
+                     "--body", body,
+                     "--add-label", label)
+                  gh("issue", "comment", existing_issue,
+                     "--body", f"Issue updated by CI run: {run_url}")
+              else:
+                  print(f"  [CREATE] {name} → creating issue ({label})")
+                  gh("issue", "create",
+                     "--title", title,
+                     "--body", body,
+                     "--label", label)
+
+          print("\nTriage complete.")
+          PYEOF
