@@ -501,22 +501,51 @@ def generate_report(
 # ---------------------------------------------------------------------------
 # Main orchestration
 # ---------------------------------------------------------------------------
+def _resolve_output_path(cli_value):
+    """
+    Determine the JSON report output path and mesa mode label.
+
+    Precedence (highest to lowest):
+      1. --output-json CLI argument  (explicit override)
+      2. MESA_VERSION_LABEL env var  (set by GitHub Actions matrix)
+      3. Hardcoded default           (local runs)
+
+    Returns (output_path, mesa_label).
+    """
+    mesa_label = os.getenv("MESA_VERSION_LABEL", "").strip()
+
+    if cli_value:
+        # Explicit CLI flag always wins
+        return cli_value, mesa_label or "local"
+
+    if mesa_label:
+        return f"example_validation_results_{mesa_label}.json", mesa_label
+
+    return "example_validation_results.json", "local"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate mesa-examples in CI")
     parser.add_argument("--examples-dir", default=EXAMPLES_DIR,
                         help="Root directory containing examples (default: examples)")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
-                        help="Max seconds per example (default: 10)")
+                        help="Max seconds per example (default: 30)")
     parser.add_argument("--skip-install", action="store_true",
                         help="Skip pip install step (useful if deps already present)")
-    parser.add_argument("--output-json", default="validation_report.json",
-                        help="Path for the JSON report output (default: validation_report.json)")
+    parser.add_argument("--output-json", default=None,
+                        help="Override report path (default: auto-named from MESA_VERSION_LABEL)")
     args = parser.parse_args()
 
-    print(f"mesa-examples Validator")
-    print(f"  Examples dir : {args.examples_dir}")
-    print(f"  Timeout      : {args.timeout}s per example")
-    print(f"  JSON output  : {args.output_json}\n")
+    # ── Resolve output path: CLI > MESA_VERSION_LABEL env var > default ───────
+    output_json, mesa_label = _resolve_output_path(args.output_json)
+
+    print("mesa-examples Validator")
+    print(f"  Examples dir      : {args.examples_dir}")
+    print(f"  Timeout           : {args.timeout}s per example")
+    print(f"  JSON output       : {output_json}")
+    if mesa_label != "local":
+        print(f"  Mesa validation mode: {mesa_label}")
+    print()
 
     # ── Discover ─────────────────────────────────────────────────────────────
     examples = discover_examples(args.examples_dir)
@@ -548,13 +577,14 @@ def main() -> int:
 
     # ── Report ────────────────────────────────────────────────────────────────
     run_meta = {
-        "examples_dir": args.examples_dir,
-        "timeout_seconds": args.timeout,
-        "skip_install": args.skip_install,
-        "python": sys.version,
-        "platform": sys.platform,
+        "examples_dir":       args.examples_dir,
+        "timeout_seconds":    args.timeout,
+        "skip_install":       args.skip_install,
+        "mesa_version_label": mesa_label,
+        "python":             sys.version,
+        "platform":           sys.platform,
     }
-    generate_report(results, examples, run_meta, output_json=args.output_json)
+    generate_report(results, examples, run_meta, output_json=output_json)
 
     # Non-zero exit if any example did not PASS
     any_failure = any(r.status != STATUS_PASS for r in results)

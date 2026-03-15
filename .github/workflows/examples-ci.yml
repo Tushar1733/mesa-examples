@@ -1,35 +1,127 @@
-name: Validate Mesa Examples
+name: Validate Examples
 
 on:
-  pull_request:
   push:
-  schedule:
-    - cron: "0 0 * * 0"   # weekly check
+    branches: ["main", "master"]
+    paths:
+      - "examples/**"
+      - "scripts/validate_examples.py"
+      - ".github/workflows/examples-ci.yml"
+  pull_request:
+    branches: ["main", "master"]
+    paths:
+      - "examples/**"
+      - "scripts/validate_examples.py"
+      - ".github/workflows/examples-ci.yml"
+  # Allow manual trigger from the Actions tab
+  workflow_dispatch:
+    inputs:
+      timeout:
+        description: "Seconds per example before TIMEOUT"
+        required: false
+        default: "30"
+      examples_dir:
+        description: "Root directory containing examples"
+        required: false
+        default: "examples"
 
 jobs:
-  validate-examples:
-    runs-on: ubuntu-latest
+  validate:
+    name: Validate Examples (${{ matrix.os }})
+
+    strategy:
+      fail-fast: false          # run all OS variants even if one fails
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    # Give the whole job enough room for many examples + setup
+    timeout-minutes: 60
 
     steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ── 2. Python setup ──────────────────────────────────────────────────────
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
-      - name: Install base dependencies
+      # ── 3. Install mesa from repo (editable) + CI script dependencies ────────
+      - name: Install mesa (editable) and validator dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install mesa solara requests pyyaml
+          pip install -e .
+          pip install solara requests pyyaml
 
-      - name: Run example validator
+      # ── 4. Virtual display for headless rendering on Linux ───────────────────
+      - name: Start virtual display (Linux only)
+        if: runner.os == 'Linux'
         run: |
-          python scripts/read_examples.py
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb
+          Xvfb :99 -screen 0 1280x720x24 &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
 
+      # ── 5. Run the validator ─────────────────────────────────────────────────
+      - name: Run example validator
+        env:
+          # Prevent solara / matplotlib from opening GUI windows
+          MPLBACKEND: Agg
+          DISPLAY: ${{ runner.os == 'Linux' && ':99' || '' }}
+        run: |
+          python scripts/validate_examples.py \
+            --examples-dir ${{ github.event.inputs.examples_dir || 'examples' }} \
+            --timeout ${{ github.event.inputs.timeout || '30' }} \
+            --output-json validation_report.json
+
+      # ── 6. Upload JSON report as artifact ────────────────────────────────────
       - name: Upload validation report
+        if: always()           # upload even when examples fail
         uses: actions/upload-artifact@v4
         with:
-          name: example-validation-report
-          path: example_validation_results.json
+          name: validation-report-${{ matrix.os }}
+          path: validation_report.json
+          retention-days: 30
+
+      # ── 7. Print report summary in the Actions log ───────────────────────────
+      - name: Print JSON report summary
+        if: always()
+        shell: python
+        run: |
+          import json, sys, os
+
+          path = "validation_report.json"
+          if not os.path.exists(path):
+              print("No report file found.")
+              sys.exit(0)
+
+          with open(path) as f:
+              report = json.load(f)
+
+          s = report["summary"]
+          print(f"\n{'='*50}")
+          print(f"  Validation Summary")
+          print(f"{'='*50}")
+          print(f"  Total   : {s['total']}")
+          print(f"  PASS    : {s['passed']}")
+          print(f"  FAIL    : {s['failed']}")
+          print(f"  TIMEOUT : {s['timeout']}")
+          print(f"{'='*50}\n")
+
+          print(f"{'Example':<35} {'Status':<10} Notes")
+          print("-" * 75)
+          for ex in report["examples"]:
+              notes = (ex["notes"] or "")[:40]
+              print(f"  {ex['name']:<33} {ex['status']:<10} {notes}")
+
+          print()
+
+          # Fail the step if any example did not PASS
+          if s["failed"] > 0 or s["timeout"] > 0:
+              print("::error::One or more examples failed validation. See report above.")
+              sys.exit(1)
