@@ -55,7 +55,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-          pip install mesa mesa[rec]  solara requests pyyaml networkx numpy pandas  matplotlib jupyter
+          pip install mesa solara
 
       # ── 4. Virtual display for headless rendering on Linux ───────────────────
       - name: Start virtual display (Linux only)
