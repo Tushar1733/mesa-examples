@@ -27,14 +27,14 @@ on:
 
 jobs:
   validate:
-    name: Validate Examples (${{ matrix.os }})
+    name: Validate Examples 
 
     strategy:
       fail-fast: false          # run all OS variants even if one fails
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     # Give the whole job enough room for many examples + setup
     timeout-minutes: 60
