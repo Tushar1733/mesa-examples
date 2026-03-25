@@ -74,7 +74,7 @@ jobs:
           MPLBACKEND: Agg
           DISPLAY: ${{ runner.os == 'Linux' && ':99' || '' }}
         run: |
-          python scripts/validate_examples.py \
+          python scripts\validate_examples.py \
             --examples-dir ${{ github.event.inputs.examples_dir || 'examples' }} \
             --timeout ${{ github.event.inputs.timeout || '30' }} \
             --output-json validation_report.json
