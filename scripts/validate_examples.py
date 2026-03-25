@@ -24,6 +24,12 @@ from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Optional
 
+# Force UTF-8 output on all platforms (Windows cp1252, Linux pipes, CI runners)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import requests
 import yaml
 
@@ -149,7 +155,7 @@ def _filter_requirements(req_file: str) -> list[str]:
             if not line or line.startswith("#"):
                 continue
             # Extract the bare package name (before any version specifier)
-            pkg_name = line.split("~=")[0].split("==")[0].split(">=")[0].split("<=")[0].split("!=")[0].split(">")[0].split("<")[0].split("[")[0].strip().lower()
+            pkg_name = line.split("~=")[0].split("==")[0].split(">=")[0]                            .split("<=")[0].split("!=")[0].split(">")[0]                            .split("<")[0].split("[")[0].strip().lower()
             if pkg_name in SKIP_PACKAGES:
                 print(f"    Skipping {line!r} (provided by repo/environment)")
                 continue
@@ -253,6 +259,15 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
 
     print(f"  Running: {' '.join(cmd)}")
 
+    # Build a CI-safe environment: unbuffered Python, no browser, no display
+    ci_env = os.environ.copy()
+    ci_env["PYTHONUNBUFFERED"] = "1"        # ensures output is not buffered
+    ci_env["PYTHONDONTWRITEBYTECODE"] = "1" # skip .pyc files
+    ci_env["BROWSER"] = "echo"              # prevent any browser from opening
+    ci_env["MPLBACKEND"] = "Agg"            # non-interactive matplotlib backend
+    if sys.platform != "win32":
+        ci_env.pop("DISPLAY", None)         # suppress GUI on headless Linux
+
     try:
         process = subprocess.Popen(
             cmd,
@@ -260,6 +275,9 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=ci_env,
             # shell=True is needed on Windows so that script wrappers like
             # solara.cmd / solara.exe are resolved via PATH correctly.
             shell=(sys.platform == "win32"),
@@ -273,6 +291,9 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=ci_env,
                 shell=True,
             )
         except Exception:

@@ -2,41 +2,44 @@ name: Validate Examples
 
 on:
   push:
-    branches: ["main", "master"]
+    branches: ["main"]
     paths:
       - "examples/**"
       - "scripts/validate_examples.py"
-      - ".github/workflows/examples-ci.yml"
+      - ".github/workflows/examples_ci.yml"
   pull_request:
-    branches: ["main", "master"]
+    branches: ["main"]
     paths:
       - "examples/**"
       - "scripts/validate_examples.py"
-      - ".github/workflows/examples-ci.yml"
+      - ".github/workflows/examples_ci.yml"
   # Allow manual trigger from the Actions tab
   workflow_dispatch:
     inputs:
       timeout:
-        description: "Seconds per example before TIMEOUT"
+        description: "Per-example timeout in seconds"
         required: false
         default: "30"
-      examples_dir:
-        description: "Root directory containing examples"
-        required: false
-        default: "examples"
 
 jobs:
   validate:
-    name: Validate Examples (${{ matrix.os }})
+    name: Validate Examples (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
 
-    strategy:         
+    strategy:
+      fail-fast: false          # run all matrix entries even if one fails
       matrix:
-        os: [ubuntu-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
-    runs-on: ${{ matrix.os }}
-
-    # Give the whole job enough room for many examples + setup
-    timeout-minutes: 60
+    env:
+      # Used by validate_examples.py to auto-name the JSON report
+      MESA_VERSION_LABEL: "py${{ matrix.python-version }}"
+      # Ensure Python output is never buffered in CI logs
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      # Force non-interactive matplotlib and suppress any GUI attempts
+      MPLBACKEND: "Agg"
+      DISPLAY: ""
 
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────────
@@ -44,82 +47,45 @@ jobs:
         uses: actions/checkout@v4
 
       # ── 2. Python setup ──────────────────────────────────────────────────────
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: ${{ matrix.python-version }}
           cache: "pip"
 
-      # ── 3. Install mesa from repo (editable) + CI script dependencies ────────
-      - name: Install mesa (editable) and validator dependencies
+      # ── 3. Install mesa (from repo) + validator dependencies ─────────────────
+      - name: Install mesa (editable) and script dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          # Install mesa from the repo root in editable mode
+          pip install -e ".[viz]" --quiet
+          # Validator script needs requests and pyyaml
+          pip install requests pyyaml --quiet
 
-      # ── 4. Virtual display for headless rendering on Linux ───────────────────
-      - name: Start virtual display (Linux only)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y xvfb
-          Xvfb :99 -screen 0 1280x720x24 &
-          echo "DISPLAY=:99" >> $GITHUB_ENV
+      # ── 4. Install solara ────────────────────────────────────────────────────
+      - name: Install solara
+        run: pip install solara --quiet
 
-      # ── 5. Run the validator ─────────────────────────────────────────────────
-      - name: Run example validator
-        env:
-          # Prevent solara / matplotlib from opening GUI windows
-          MPLBACKEND: Agg
-          DISPLAY: ${{ runner.os == 'Linux' && ':99' || '' }}
+      # ── 5. Run validator ─────────────────────────────────────────────────────
+      - name: Validate examples
+        timeout-minutes: 30
         run: |
           python scripts/validate_examples.py \
-            --examples-dir ${{ github.event.inputs.examples_dir || 'examples' }} \
-            --timeout ${{ github.event.inputs.timeout || '30' }} \
-            --output-json validation_report.json
+            --examples-dir examples \
+            --timeout ${{ github.event.inputs.timeout || '30' }}
 
       # ── 6. Upload JSON report as artifact ────────────────────────────────────
       - name: Upload validation report
         if: always()           # upload even when examples fail
         uses: actions/upload-artifact@v4
         with:
-          name: validation-report-${{ matrix.os }}
-          path: validation_report.json
+          name: validation-report-py${{ matrix.python-version }}
+          path: example_validation_results_py${{ matrix.python-version }}.json
           retention-days: 30
 
-      # ── 7. Print report summary in the Actions log ───────────────────────────
-      - name: Print JSON report summary
+      # ── 7. Print report path for easy log navigation ─────────────────────────
+      - name: Report summary
         if: always()
-        shell: python
         run: |
-          import json, sys, os
-
-          path = "validation_report.json"
-          if not os.path.exists(path):
-              print("No report file found.")
-              sys.exit(0)
-
-          with open(path) as f:
-              report = json.load(f)
-
-          s = report["summary"]
-          print(f"\n{'='*50}")
-          print(f"  Validation Summary")
-          print(f"{'='*50}")
-          print(f"  Total   : {s['total']}")
-          print(f"  PASS    : {s['passed']}")
-          print(f"  FAIL    : {s['failed']}")
-          print(f"  TIMEOUT : {s['timeout']}")
-          print(f"{'='*50}\n")
-
-          print(f"{'Example':<35} {'Status':<10} Notes")
-          print("-" * 75)
-          for ex in report["examples"]:
-              notes = (ex["notes"] or "")[:40]
-              print(f"  {ex['name']:<33} {ex['status']:<10} {notes}")
-
-          print()
-
-          # Fail the step if any example did not PASS
-          if s["failed"] > 0 or s["timeout"] > 0:
-              print("::error::One or more examples failed validation. See report above.")
-              sys.exit(0)
+          echo "### Validation complete for Python ${{ matrix.python-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "JSON report uploaded as: validation-report-py${{ matrix.python-version }}" >> $GITHUB_STEP_SUMMARY
