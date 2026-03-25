@@ -155,7 +155,7 @@ def _filter_requirements(req_file: str) -> list[str]:
             if not line or line.startswith("#"):
                 continue
             # Extract the bare package name (before any version specifier)
-            pkg_name = line.split("~=")[0].split("==")[0].split(">=")[0]                            .split("<=")[0].split("!=")[0].split(">")[0]                            .split("<")[0].split("[")[0].strip().lower()
+            pkg_name = line.split("~=")[0].split("==")[0].split(">=")[0].split("<=")[0].split("!=")[0].split(">")[0].split("<")[0].split("[")[0].strip().lower()
             if pkg_name in SKIP_PACKAGES:
                 print(f"    Skipping {line!r} (provided by repo/environment)")
                 continue
