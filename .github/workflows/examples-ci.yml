@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  validate:
+  validate-using-latest-deps:
     runs-on: ubuntu-latest
 
     strategy:
@@ -32,19 +32,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install \
-          "mesa[rec]" \
-          "mesa[viz]" \
-          scipy \
-          matplotlib \
-          solara \
-          requests \
-          pyyaml \
-          networkx \
-          numpy \
-          pandas \
-          seaborn \
-          jupyter
+          pip install -r requirements.txt
 
       - name: Disable GUI backend
         run: |
@@ -52,4 +40,35 @@ jobs:
 
       - name: Run validator
         run: |
-          xvfb-run -a python scripts/validate_examples.py
+          xvfb-run -a python scripts\latest_validate_examples.py
+  validate-using-declared-deps:
+   runs-on: ubuntu-latest
+
+   strategy:
+     matrix:
+       python-version: ["3.14"]
+
+   steps:
+     - name: Checkout Repository
+       uses: actions/checkout@v4
+
+     - name: Setup Python
+       uses: actions/setup-python@v5
+       with:
+         python-version: ${{ matrix.python-version }}
+
+     - name: Upgrade pip
+       run: python -m pip install --upgrade pip
+
+     - name: Install system packages for headless rendering
+       run: |
+         sudo apt-get update
+         sudo apt-get install -y xvfb
+
+     - name: Disable GUI backend
+       run: |
+         echo "MPLBACKEND=Agg" >> $GITHUB_ENV
+
+     - name: Run validator
+       run: |
+         xvfb-run -a python scripts\Declared_validate_examples.py.py

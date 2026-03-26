@@ -565,7 +565,7 @@ def _resolve_output_path(cli_value):
     if mesa_label:
         return f"example_validation_results_{mesa_label}.json", mesa_label
 
-    return "example_validation_results.json", "local"
+    return "example_validation_results(declared-deps).json", "local"
 
 
 def main() -> int:

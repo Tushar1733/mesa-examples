@@ -1,0 +1,13 @@
+
+mesa[rec]
+mesa[viz]
+scipy 
+matplotlib 
+solara 
+requests 
+pyyaml 
+networkx 
+numpy
+pandas 
+seaborn
+jupyter
