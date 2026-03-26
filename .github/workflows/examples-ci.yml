@@ -43,7 +43,6 @@ jobs:
           xvfb-run -a python scripts/latest_validate_examples.py
 
 
-jobs:
   validate-using-declared-deps:
     runs-on: ubuntu-latest
 
@@ -75,7 +74,7 @@ jobs:
 
       - name: Run validator
         run: |
-          xvfb-run -a python scripts/declared_validate_examples.py.py
+          xvfb-run -a python scripts/declared_validate_examples.py
 
 
  
