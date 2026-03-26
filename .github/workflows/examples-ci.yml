@@ -71,4 +71,4 @@ jobs:
 
      - name: Run validator
        run: |
-         xvfb-run -a python scripts/Declared_validate_examples.py
+         xvfb-run -a python scripts/declared_validate_examples.py
