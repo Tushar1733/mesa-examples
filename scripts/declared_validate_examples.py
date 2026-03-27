@@ -345,6 +345,17 @@ def run_example(meta: ExampleMetadata, python_exec: str, timeout: int = DEFAULT_
     if sys.platform != "win32":
         ci_env.pop("DISPLAY", None)
 
+    # FIX: Prepend the venv's bin/ directory to PATH.
+    # Solara is a shell script that internally calls other binaries (uvicorn,
+    # starlette workers, etc.) via PATH lookups. Even though we pass the full
+    # path to the solara binary itself, those child processes still inherit the
+    # parent PATH which doesn't include the venv — so they exit with code 127.
+    # Prepending venv bin/ here makes every binary the venv installed visible
+    # to solara and all its child processes.
+    venv_bin = os.path.dirname(python_exec)
+    ci_env["PATH"]        = venv_bin + os.pathsep + ci_env.get("PATH", "")
+    ci_env["VIRTUAL_ENV"] = os.path.dirname(venv_bin)  # activate venv for tools that check it
+
     # Set deadline BEFORE launching so the full budget is available
     deadline = time.time() + timeout
 
