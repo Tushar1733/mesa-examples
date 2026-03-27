@@ -450,6 +450,12 @@ def run_example(meta: ExampleMetadata, python_exec: str, timeout: int = DEFAULT_
             combined = "".join(stdout_lines) + "".join(stderr_lines)
             err_match = detect_errors(combined)
             note = err_match if err_match else f"Process exited early (code {process.returncode})"
+            # Print captured output so we can see WHY the process exited
+            if combined.strip():
+                print(f"  --- captured output ---")
+                for line in combined.splitlines()[-20:]:  # last 20 lines
+                    print(f"  | {line}")
+                print(f"  --- end output ---")
             return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=note)
 
     # ── Final check: did process exit at end of boot window? ────────────────
@@ -461,6 +467,12 @@ def run_example(meta: ExampleMetadata, python_exec: str, timeout: int = DEFAULT_
         combined = "".join(stdout_lines) + "".join(stderr_lines)
         err_match = detect_errors(combined)
         note = err_match if err_match else f"Process exited early (code {process.returncode})"
+        # Print captured output so we can see WHY the process exited
+        if combined.strip():
+            print(f"  --- captured output ---")
+            for line in combined.splitlines()[-20:]:
+                print(f"  | {line}")
+            print(f"  --- end output ---")
         return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=note)
 
     # ── Pre health-check deadline guard ─────────────────────────────────────
