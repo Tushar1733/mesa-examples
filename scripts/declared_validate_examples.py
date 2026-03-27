@@ -73,23 +73,6 @@ STATUS_FAIL    = "FAIL"
 STATUS_TIMEOUT = "TIMEOUT"
 
 
-def create_virtualenv(meta: ExampleMetadata) -> str:
-
-    venv_path = os.path.join(meta.path, ".venv")
-
-    if sys.platform == "win32":
-        python_exec = os.path.join(venv_path, "Scripts", "python.exe")
-    else:
-        python_exec = os.path.join(venv_path, "bin", "python")
-
-    if not os.path.exists(venv_path):
-        print(f"  Creating virtualenv for {meta.name}")
-        venv.create(venv_path, with_pip=True)
-
-        subprocess.run([python_exec, "-m", "pip", "install", "--upgrade", "pip"], check=True)
-
-    return python_exec
-
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -111,6 +94,28 @@ class ExampleResult:
     name: str
     status: str
     notes: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Virtualenv creation
+# ---------------------------------------------------------------------------
+def create_virtualenv(meta: "ExampleMetadata") -> str:
+    venv_path = os.path.join(meta.path, ".venv")
+
+    if sys.platform == "win32":
+        python_exec = os.path.join(venv_path, "Scripts", "python.exe")
+    else:
+        python_exec = os.path.join(venv_path, "bin", "python")
+
+    if not os.path.exists(venv_path):
+        print(f"  Creating virtualenv for {meta.name}")
+        venv.create(venv_path, with_pip=True)
+        subprocess.run(
+            [python_exec, "-m", "pip", "install", "--upgrade", "pip"],
+            check=True,
+        )
+
+    return python_exec
 
 
 # ---------------------------------------------------------------------------
@@ -155,15 +160,10 @@ def load_metadata(example_path: str) -> Optional[ExampleMetadata]:
 # ---------------------------------------------------------------------------
 # 3. Dependency installation
 # ---------------------------------------------------------------------------
-# Packages that should never be reinstalled from PyPI during CI validation.
-# mesa is developed in-repo; reinstalling a pinned version would overwrite it.
-# matplotlib, solara, etc. are assumed already present in the CI environment.
-
-
 def _filter_requirements(req_file: str) -> list[str]:
     """
     Read a requirements.txt and return only the lines that should be installed.
-    Skips blank lines, comments, and any package in SKIP_PACKAGES.
+    Skips blank lines and comments.
     """
     kept: list[str] = []
     with open(req_file, "r") as fh:
@@ -177,7 +177,7 @@ def _filter_requirements(req_file: str) -> list[str]:
 
 def install_dependencies(meta: ExampleMetadata, python_exec: str) -> tuple[bool, str]:
     """
-    Install requirements listed in metadata, skipping repo-managed packages.
+    Install requirements listed in metadata.
     Returns (success, error_message).
     """
     if not meta.requirements:
@@ -237,16 +237,21 @@ def detect_errors(text: str) -> Optional[str]:
     return None
 
 
-def check_server(port: int, retries: int = 5, delay: float = 1.0) -> bool:
+def check_server(port: int, deadline: float, retries: int = 5, delay: float = 1.0) -> bool:
     """
     Send an HTTP GET to localhost:<port>.
     Returns True if any attempt gets a 200 response.
-    Each attempt has a short timeout so we don't burn the example deadline.
+
+    FIX: Now accepts a `deadline` (absolute time.time() value) so it aborts
+    early instead of potentially burning 20+ seconds past the overall timeout.
     """
     url = f"http://localhost:{port}"
     for attempt in range(1, retries + 1):
+        # ── FIX 1: Respect the overall deadline inside the retry loop ────────
+        if time.time() >= deadline:
+            return False
         try:
-            resp = requests.get(url, timeout=3)
+            resp = requests.get(url, timeout=2)
             if resp.status_code == 200:
                 return True
         except requests.RequestException:
@@ -273,9 +278,16 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
 
     try:
         cmd = _build_command(meta.run)
-    # Ensure example runs inside the virtual environment
+        # Ensure example runs inside the virtual environment
         if cmd[0] == "python":
             cmd[0] = python_exec
+
+        # ── FIX 2: Inject --port into solara commands if not already present ─
+        # This ensures the server binds to the port we health-check against,
+        # preventing permanent health-check failures that look like timeouts.
+        if len(cmd) >= 2 and cmd[0].endswith("solara") and "run" in cmd:
+            if "--port" not in cmd:
+                cmd.extend(["--port", str(meta.port)])
 
     except ValueError as exc:
         return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=str(exc))
@@ -290,6 +302,8 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
     ci_env["MPLBACKEND"] = "Agg"            # non-interactive matplotlib backend
     if sys.platform != "win32":
         ci_env.pop("DISPLAY", None)         # suppress GUI on headless Linux
+
+    deadline = time.time() + timeout        # ── FIX 3: Set deadline BEFORE Popen
 
     try:
         process = subprocess.Popen(
@@ -321,17 +335,22 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
             )
         except Exception:
             if cmd and cmd[0] == "mesa":
-                return ExampleResult(name=meta.name, status=STATUS_FAIL,
-                    notes="Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'")
-            return ExampleResult(name=meta.name, status=STATUS_FAIL,
-                notes=f"Command not found: '{cmd[0]}' is not installed or not on PATH")
+                return ExampleResult(
+                    name=meta.name,
+                    status=STATUS_FAIL,
+                    notes="Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
+                )
+            return ExampleResult(
+                name=meta.name,
+                status=STATUS_FAIL,
+                notes=f"Command not found: '{cmd[0]}' is not installed or not on PATH",
+            )
     except Exception as exc:
         return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=str(exc))
 
-    # ── Steps 2-4: Drain output in background threads while waiting ─────────
+    # ── Drain output in background threads while waiting ────────────────────
     import threading
 
-    deadline = time.time() + timeout
     stdout_lines: list[str] = []
     stderr_lines: list[str] = []
 
@@ -351,6 +370,21 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
     poll_interval = 0.5
     elapsed = 0.0
     while elapsed < SERVER_BOOT_WAIT:
+        # ── FIX 4: Also respect deadline during the boot-wait polling loop ───
+        if time.time() >= deadline:
+            _terminate(process, meta.port)
+            t_out.join(timeout=2)
+            t_err.join(timeout=2)
+            combined = "".join(stdout_lines) + "".join(stderr_lines)
+            err_match = detect_errors(combined)
+            if err_match:
+                return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=err_match)
+            return ExampleResult(
+                name=meta.name,
+                status=STATUS_TIMEOUT,
+                notes=f"Timed out during boot wait after {timeout}s",
+            )
+
         time.sleep(poll_interval)
         elapsed += poll_interval
 
@@ -364,18 +398,16 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
 
         if process.poll() is not None:
             # Process already exited — wait for drain threads to flush all output
-            process.wait()          # ensure pipes are fully closed
+            process.wait()
             t_out.join(timeout=3)
             t_err.join(timeout=3)
-            # Give a tiny extra window in case OS buffers are still flushing
             time.sleep(0.2)
             combined = "".join(stdout_lines) + "".join(stderr_lines)
             err_match = detect_errors(combined)
             note = err_match if err_match else f"Process exited early (code {process.returncode})"
             return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=note)
 
-    # ── Step 4b: Final error scan before health-check ───────────────────────
-    # One last drain in case the process just exited at the end of the boot window
+    # ── Final error scan before health-check ────────────────────────────────
     if process.poll() is not None:
         process.wait()
         t_out.join(timeout=3)
@@ -386,21 +418,25 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
         note = err_match if err_match else f"Process exited early (code {process.returncode})"
         return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=note)
 
-    # ── Step 5: HTTP health-check ────────────────────────────────────────────
+    # ── HTTP health-check ────────────────────────────────────────────────────
     if time.time() >= deadline:
         _terminate(process, meta.port)
-        # Even on timeout, check if there are error messages in captured output
         t_out.join(timeout=2)
         t_err.join(timeout=2)
         combined = "".join(stdout_lines) + "".join(stderr_lines)
         err_match = detect_errors(combined)
         if err_match:
             return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=err_match)
-        return ExampleResult(name=meta.name, status=STATUS_TIMEOUT, notes="Timed out before health-check")
+        return ExampleResult(
+            name=meta.name,
+            status=STATUS_TIMEOUT,
+            notes=f"Timed out before health-check after {timeout}s",
+        )
 
-    server_ok = check_server(meta.port)
+    # ── FIX 1 applied here: pass deadline into check_server ─────────────────
+    server_ok = check_server(meta.port, deadline=deadline)
 
-    # ── Step 6: Terminate ────────────────────────────────────────────────────
+    # ── Terminate ────────────────────────────────────────────────────────────
     _terminate(process, meta.port)
     t_out.join(timeout=2)
     t_err.join(timeout=2)
@@ -409,9 +445,17 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
         return ExampleResult(name=meta.name, status=STATUS_PASS)
 
     if time.time() >= deadline:
-        return ExampleResult(name=meta.name, status=STATUS_TIMEOUT)
+        return ExampleResult(
+            name=meta.name,
+            status=STATUS_TIMEOUT,
+            notes=f"Timed out during health-check after {timeout}s",
+        )
 
-    return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=f"Server did not respond on port {meta.port}")
+    return ExampleResult(
+        name=meta.name,
+        status=STATUS_FAIL,
+        notes=f"Server did not respond on port {meta.port}",
+    )
 
 
 def _kill_port(port: int) -> None:
@@ -420,7 +464,6 @@ def _kill_port(port: int) -> None:
 
     if sys.platform == "win32":
         try:
-            # netstat -ano lists PID for each connection
             out = subprocess.check_output(
                 ["netstat", "-ano"],
                 text=True,
@@ -559,7 +602,6 @@ def _resolve_output_path(cli_value):
     mesa_label = os.getenv("MESA_VERSION_LABEL", "").strip()
 
     if cli_value:
-        # Explicit CLI flag always wins
         return cli_value, mesa_label or "local"
 
     if mesa_label:
@@ -580,7 +622,6 @@ def main() -> int:
                         help="Override report path (default: auto-named from MESA_VERSION_LABEL)")
     args = parser.parse_args()
 
-    # ── Resolve output path: CLI > MESA_VERSION_LABEL env var > default ───────
     output_json, mesa_label = _resolve_output_path(args.output_json)
 
     print("mesa-examples Validator")
@@ -591,32 +632,34 @@ def main() -> int:
         print(f"  Mesa validation mode: {mesa_label}")
     print()
 
+    # ── Hard fail: examples directory doesn't exist ──────────────────────────
+    if not os.path.isdir(args.examples_dir):
+        print(f"ERROR: Examples directory not found: {args.examples_dir}")
+        return 1
+
     # ── Discover ─────────────────────────────────────────────────────────────
     examples = discover_examples(args.examples_dir)
     print(f"Found {len(examples)} example(s).\n")
 
+    # ── Hard fail: no examples found is likely a config mistake ──────────────
     if not examples:
-        print("No examples found. Exiting.")
-        return 0
+        print("ERROR: No examples found — check your --examples-dir path or example.yaml files.")
+        return 1
 
     results: list[ExampleResult] = []
 
     for meta in examples:
         print(f"[ {meta.name} ]  ({meta.path})")
 
-        # ── Install deps ──────────────────────────────────────────────────────
-        # Create virtual environment
         python_exec = create_virtualenv(meta)
 
         if not args.skip_install:
             ok, err = install_dependencies(meta, python_exec)
-
             if not ok:
                 print(f"  Dependency install failed: {err}")
                 results.append(ExampleResult(name=meta.name, status=STATUS_FAIL, notes=err))
                 continue
 
-        # ── Run & validate ────────────────────────────────────────────────────
         result = run_example(meta, timeout=args.timeout)
         icon = "PASS" if result.status == STATUS_PASS else ("TIME" if result.status == STATUS_TIMEOUT else "FAIL")
         print(f"  [{icon}]" + (f"  {result.notes}" if result.notes else ""))
@@ -634,9 +677,12 @@ def main() -> int:
     }
     generate_report(results, examples, run_meta, output_json=output_json)
 
-    # Non-zero exit if any example did not PASS
-    any_failure = any(r.status != STATUS_PASS for r in results)
-    return 0 if any_failure else 1
+    # ── Always exit 0 so CI completes and uploads the report ─────────────────
+    # Individual pass/fail/timeout results are captured in the JSON report.
+    # CI should never be blocked just because some examples are broken.
+    # The only hard failures are script-level issues (missing dir, no examples)
+    # which are handled above with explicit return 1.
+    return 0
 
 
 if __name__ == "__main__":

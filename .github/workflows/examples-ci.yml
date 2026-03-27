@@ -40,6 +40,27 @@ jobs:
         run: xvfb-run -a python scripts/latest_validate_examples.py
 
 
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-report
+          path: example_validation_results(latest-deps).json
+          if-no-files-found: warn
+      
+          
+      - name: Commit validation report
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add example_validation_results_ci.json
+          git diff --staged --quiet || git commit -m "ci: update validation report [skip ci]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
   validate-using-declared-deps:
     runs-on: ubuntu-latest
 
@@ -63,13 +84,41 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
+          sudo apt-get install -y lsof
           
 
-      - name: Install dependencies
+      - name: Install script dependencies
         run: pip install requests pyyaml 
 
       - name: Disable GUI backend
         run: echo "MPLBACKEND=Agg" >> $GITHUB_ENV
 
+      - name: Clean stale venvs
+        run: find examples -type d -name ".venv" -exec rm -rf {} +
+
       - name: Run validator
-        run: xvfb-run -a python scripts/declared_validate_examples.py
+        env:
+          MESA_VERSION_LABEL: "ci"   
+        run: python validate_examples.py --examples-dir examples --timeout 30
+
+
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-report
+          path: example_validation_results(declared-deps).json
+          if-no-files-found: warn
+
+
+      - name: Commit validation report
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add example_validation_results_ci.json
+          git diff --staged --quiet || git commit -m "ci: update validation report [skip ci]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+ 
