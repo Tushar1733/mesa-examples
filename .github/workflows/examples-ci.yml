@@ -99,7 +99,7 @@ jobs:
       - name: Run validator
         env:
           MESA_VERSION_LABEL: "ci"   
-        run: python validate_examples.py --examples-dir examples --timeout 30
+        run: python scripts/declared_validate_examples.py --examples-dir examples --timeout 30
 
 
       - name: Upload validation report
