@@ -109,10 +109,21 @@ def create_virtualenv(meta: "ExampleMetadata") -> str:
 
     if not os.path.exists(venv_path):
         print(f"  Creating virtualenv for {meta.name}")
-        venv.create(venv_path, with_pip=True)
+        subprocess.run(
+            [sys.executable, "-m", "venv", venv_path],
+            check=True,
+            timeout=60,
+        )
         subprocess.run(
             [python_exec, "-m", "pip", "install", "--upgrade", "pip"],
             check=True,
+            timeout=60,
+        )
+        # Always install solara so the run command is always found
+        subprocess.run(
+            [python_exec, "-m", "pip", "install", "solara", "--quiet"],
+            check=True,
+            timeout=120,   # solara has many deps, give it more time
         )
 
     return python_exec
