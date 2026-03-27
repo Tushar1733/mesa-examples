@@ -6,12 +6,12 @@ mesa-examples repository.  Designed for non-interactive GitHub Actions use.
 
 Usage
 -----
-    python validate_examples.py [--examples-dir examples] [--timeout 10]
+    python validate_examples.py [--examples-dir examples] [--timeout 30]
 
 Exit codes
 ----------
-    0  – all examples passed
-    1  – one or more examples failed or timed-out
+    0  – script completed successfully (check JSON report for per-example results)
+    1  – script-level failure (examples dir not found, or no examples discovered)
 """
 
 import argparse
@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 # Force UTF-8 output on all platforms (Windows cp1252, Linux pipes, CI runners)
@@ -32,45 +32,51 @@ if hasattr(sys.stderr, "reconfigure"):
 
 import requests
 import yaml
-import venv
 
 # ---------------------------------------------------------------------------
 # Constants / defaults
 # ---------------------------------------------------------------------------
-EXAMPLES_DIR = "examples"
-DEFAULT_TIMEOUT = 30          # seconds per example (solara needs ~8-15s to boot)
-SERVER_BOOT_WAIT = 10         # seconds to wait before health-check
+EXAMPLES_DIR     = "examples"
+DEFAULT_TIMEOUT  = 30    # seconds per example (solara needs ~8-15s to boot)
+SERVER_BOOT_WAIT = 10    # seconds to poll for errors before health-check
+
 # Each entry: (pattern_to_match, human-readable label)
-# Order matters — more specific patterns should come first.
+# Order matters — more specific patterns must come first.
 ERROR_PATTERNS: list[tuple[str, str]] = [
-    # ── Relative import (package structure issue) ────────────────────────────
+    # ── Relative import ──────────────────────────────────────────────────────
     ("attempted relative import with no known parent package", "ImportError: relative import"),
 
     # ── Legacy Mesa API ──────────────────────────────────────────────────────
-    ("has no attribute 'visualization'",    "Legacy Mesa API: mesa.visualization removed"),
-    ("mesa.visualization",                  "Legacy Mesa API: mesa.visualization removed"),
-    ("ModularServer",                       "Legacy Mesa API: ModularServer removed"),
-    ("mesa runserver",                      "Legacy Mesa API: mesa runserver removed"),
+    ("has no attribute 'visualization'", "Legacy Mesa API: mesa.visualization removed"),
+    ("mesa.visualization",               "Legacy Mesa API: mesa.visualization removed"),
+    ("ModularServer",                    "Legacy Mesa API: ModularServer removed"),
+    ("mesa runserver",                   "Legacy Mesa API: mesa runserver removed"),
 
-    # ── Incomplete model / NoneType space ────────────────────────────────────
+    # ── Incomplete model ─────────────────────────────────────────────────────
     ("Unknown space type: <class 'NoneType'>", "Incomplete model: space is None"),
     ("raised exception ValueError",            "Component raised ValueError"),
     ("Unknown space type",                     "Incomplete model: unknown space type"),
 
     # ── General Python errors ────────────────────────────────────────────────
-    ("AttributeError",          "AttributeError"),
-    ("ImportError",             "ImportError"),
-    ("ModuleNotFoundError",     "ModuleNotFoundError"),
-    ("ValueError",              "ValueError"),
-    ("RuntimeError",            "RuntimeError"),
-    ("TypeError",               "TypeError"),
-    ("NameError",               "NameError"),
-    ("Traceback (most recent",  "Unhandled exception (Traceback)"),
+    ("AttributeError",         "AttributeError"),
+    ("ImportError",            "ImportError"),
+    ("ModuleNotFoundError",    "ModuleNotFoundError"),
+    ("ValueError",             "ValueError"),
+    ("RuntimeError",           "RuntimeError"),
+    ("TypeError",              "TypeError"),
+    ("NameError",              "NameError"),
+    ("Traceback (most recent", "Unhandled exception (Traceback)"),
 ]
 
 STATUS_PASS    = "PASS"
 STATUS_FAIL    = "FAIL"
 STATUS_TIMEOUT = "TIMEOUT"
+
+# Legacy run commands that no longer exist in modern Mesa
+LEGACY_COMMANDS: list[tuple[tuple, str]] = [
+    (("mesa", "runserver"), "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'"),
+    (("mesa",),             "Legacy Mesa API: mesa CLI removed - migrate to 'solara run app.py'"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +89,6 @@ class ExampleMetadata:
     requirements: Optional[str] = None
     run: Optional[str] = None
     port: int = 8765
-    status: Optional[str] = None
     maintainer: Optional[str] = None
     mesa_version: Optional[str] = None
     python: Optional[str] = None
@@ -99,7 +104,17 @@ class ExampleResult:
 # ---------------------------------------------------------------------------
 # Virtualenv creation
 # ---------------------------------------------------------------------------
-def create_virtualenv(meta: "ExampleMetadata") -> str:
+def create_virtualenv(meta: ExampleMetadata) -> str:
+    """
+    Create an isolated .venv inside the example's directory (if not already
+    present), upgrade pip, and always install solara.
+
+    FIX: Many examples don't list solara in their requirements.txt, which
+    caused code 127 ("command not found") when the run command was
+    'solara run app.py'. Installing it here unconditionally fixes that.
+
+    Returns the path to the venv's Python executable.
+    """
     venv_path = os.path.join(meta.path, ".venv")
 
     if sys.platform == "win32":
@@ -108,22 +123,25 @@ def create_virtualenv(meta: "ExampleMetadata") -> str:
         python_exec = os.path.join(venv_path, "bin", "python")
 
     if not os.path.exists(venv_path):
-        print(f"  Creating virtualenv for {meta.name}")
+        print(f"  Creating virtualenv for {meta.name} …")
+
+        # Use subprocess with timeout to avoid hanging on slow CI runners
         subprocess.run(
             [sys.executable, "-m", "venv", venv_path],
             check=True,
             timeout=60,
         )
         subprocess.run(
-            [python_exec, "-m", "pip", "install", "--upgrade", "pip"],
+            [python_exec, "-m", "pip", "install", "--upgrade", "pip", "--quiet"],
             check=True,
             timeout=60,
         )
-        # Always install solara so the run command is always found
+        # Always install solara so 'solara run app.py' is always resolvable
+        print(f"  Installing solara into venv for {meta.name} …")
         subprocess.run(
             [python_exec, "-m", "pip", "install", "solara", "--quiet"],
             check=True,
-            timeout=120,   # solara has many deps, give it more time
+            timeout=120,  # solara has many deps — give it extra time
         )
 
     return python_exec
@@ -172,10 +190,7 @@ def load_metadata(example_path: str) -> Optional[ExampleMetadata]:
 # 3. Dependency installation
 # ---------------------------------------------------------------------------
 def _filter_requirements(req_file: str) -> list[str]:
-    """
-    Read a requirements.txt and return only the lines that should be installed.
-    Skips blank lines and comments.
-    """
+    """Read requirements.txt, skip blank lines and comments."""
     kept: list[str] = []
     with open(req_file, "r") as fh:
         for raw in fh:
@@ -188,7 +203,7 @@ def _filter_requirements(req_file: str) -> list[str]:
 
 def install_dependencies(meta: ExampleMetadata, python_exec: str) -> tuple[bool, str]:
     """
-    Install requirements listed in metadata.
+    Install requirements listed in metadata into the venv.
     Returns (success, error_message).
     """
     if not meta.requirements:
@@ -199,47 +214,73 @@ def install_dependencies(meta: ExampleMetadata, python_exec: str) -> tuple[bool,
         return False, f"requirements file not found: {req_file}"
 
     packages = _filter_requirements(req_file)
-
     if not packages:
         print(f"  No external dependencies to install for {meta.name}.")
         return True, ""
 
-    print(f"  Installing {len(packages)} dependenc{'y' if len(packages)==1 else 'ies'} from {req_file} …")
+    print(f"  Installing {len(packages)} dependenc{'y' if len(packages) == 1 else 'ies'} from {req_file} …")
     result = subprocess.run(
         [python_exec, "-m", "pip", "install", *packages, "--quiet"],
         capture_output=True,
         text=True,
+        timeout=120,
     )
     if result.returncode != 0:
         return False, f"pip install failed: {result.stderr.strip()[:300]}"
     return True, ""
 
 
-# Legacy run commands that no longer exist in modern Mesa
-LEGACY_COMMANDS: list[tuple[tuple, str]] = [
-    (("mesa", "runserver"), "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'"),
-    (("mesa",),             "Legacy Mesa API: mesa CLI removed - migrate to 'solara run app.py'"),
-]
-
-
 # ---------------------------------------------------------------------------
-# 4 & 5. Execution + health-check
+# 4. Command building
 # ---------------------------------------------------------------------------
-def _build_command(run_cmd: str) -> list[str]:
+def _build_command(run_cmd: str, python_exec: str, port: int) -> list[str]:
     """
-    Convert the run string from metadata into a list suitable for Popen.
-    Raises ValueError with a clear message for known legacy commands.
+    Convert the run string from metadata into an argv list for Popen.
+
+    FIX: Previously this function only took run_cmd as an argument, so it
+    had no way to resolve the venv binary paths. It now receives python_exec
+    and port so it can:
+      - Reject legacy Mesa commands with a clear error message.
+      - Replace 'python' with the venv python executable.
+      - Replace 'solara' with the venv solara binary — fixes code 127 in CI
+        where solara is inside the venv but not on the system PATH.
+      - Auto-inject --port so the server binds to the port we health-check.
     """
     parts = run_cmd.strip().split()
+
+    # Reject legacy commands immediately
     for legacy_parts, message in LEGACY_COMMANDS:
         if tuple(parts[:len(legacy_parts)]) == legacy_parts:
             raise ValueError(message)
+
+    venv_bin = os.path.dirname(python_exec)
+
+    # Replace 'python' with venv python
+    if parts[0] == "python":
+        parts[0] = python_exec
+
+    # FIX: Replace 'solara' with the full venv binary path.
+    # On CI, solara is only inside the venv — it is NOT on the system PATH —
+    # so Popen would raise FileNotFoundError / exit 127 without this.
+    if parts[0] == "solara":
+        solara_in_venv = os.path.join(venv_bin, "solara")
+        if os.path.exists(solara_in_venv):
+            parts[0] = solara_in_venv
+
+    # FIX: Auto-inject --port so the server binds to the expected port.
+    # Without this, solara picks its own port and the health-check always fails.
+    if "solara" in parts[0] and "run" in parts and "--port" not in parts:
+        parts.extend(["--port", str(port)])
+
     return parts
 
 
+# ---------------------------------------------------------------------------
+# 5. Error detection
+# ---------------------------------------------------------------------------
 def detect_errors(text: str) -> Optional[str]:
     """
-    Scan output text for known error patterns.
+    Scan captured output for known error patterns.
     Returns a human-readable label for the first match, or None.
     """
     for pattern, label in ERROR_PATTERNS:
@@ -248,17 +289,17 @@ def detect_errors(text: str) -> Optional[str]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# 6. Health check
+# ---------------------------------------------------------------------------
 def check_server(port: int, deadline: float, retries: int = 5, delay: float = 1.0) -> bool:
     """
-    Send an HTTP GET to localhost:<port>.
-    Returns True if any attempt gets a 200 response.
-
-    FIX: Now accepts a `deadline` (absolute time.time() value) so it aborts
-    early instead of potentially burning 20+ seconds past the overall timeout.
+    Send HTTP GET to localhost:<port>.
+    Returns True on first 200 response.
+    Aborts early if the overall deadline is exceeded.
     """
     url = f"http://localhost:{port}"
     for attempt in range(1, retries + 1):
-        # ── FIX 1: Respect the overall deadline inside the retry loop ────────
         if time.time() >= deadline:
             return False
         try:
@@ -272,49 +313,40 @@ def check_server(port: int, deadline: float, retries: int = 5, delay: float = 1.
     return False
 
 
-def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> ExampleResult:
+# ---------------------------------------------------------------------------
+# 7. Run example
+# ---------------------------------------------------------------------------
+def run_example(meta: ExampleMetadata, python_exec: str, timeout: int = DEFAULT_TIMEOUT) -> ExampleResult:
     """
-    Start the example process, wait for boot, health-check, then terminate.
-    Returns an ExampleResult.
+    Launch the example, wait for boot, health-check the server, terminate.
+    Returns an ExampleResult with PASS / FAIL / TIMEOUT status.
+
+    FIX: Now receives python_exec so it can pass it into _build_command(),
+    which needs it to resolve the venv solara binary path. Previously
+    python_exec was re-derived here but never passed down, so solara was
+    never resolved and every example hit code 127.
     """
-    venv_path = os.path.join(meta.path, ".venv")
-
-    if sys.platform == "win32":
-        python_exec = os.path.join(venv_path, "Scripts", "python.exe")
-    else:
-        python_exec = os.path.join(venv_path, "bin", "python")
-
     if not meta.run:
         return ExampleResult(name=meta.name, status=STATUS_FAIL, notes="No run command in metadata")
 
     try:
-        cmd = _build_command(meta.run)
-        # Ensure example runs inside the virtual environment
-        if cmd[0] == "python":
-            cmd[0] = python_exec
-
-        # ── FIX 2: Inject --port into solara commands if not already present ─
-        # This ensures the server binds to the port we health-check against,
-        # preventing permanent health-check failures that look like timeouts.
-        if len(cmd) >= 2 and cmd[0].endswith("solara") and "run" in cmd:
-            if "--port" not in cmd:
-                cmd.extend(["--port", str(meta.port)])
-
+        cmd = _build_command(meta.run, python_exec, meta.port)
     except ValueError as exc:
         return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=str(exc))
 
     print(f"  Running: {' '.join(cmd)}")
 
-    # Build a CI-safe environment: unbuffered Python, no browser, no display
+    # CI-safe environment
     ci_env = os.environ.copy()
-    ci_env["PYTHONUNBUFFERED"] = "1"        # ensures output is not buffered
-    ci_env["PYTHONDONTWRITEBYTECODE"] = "1" # skip .pyc files
-    ci_env["BROWSER"] = "echo"              # prevent any browser from opening
-    ci_env["MPLBACKEND"] = "Agg"            # non-interactive matplotlib backend
+    ci_env["PYTHONUNBUFFERED"]        = "1"
+    ci_env["PYTHONDONTWRITEBYTECODE"] = "1"
+    ci_env["BROWSER"]                 = "echo"
+    ci_env["MPLBACKEND"]              = "Agg"
     if sys.platform != "win32":
-        ci_env.pop("DISPLAY", None)         # suppress GUI on headless Linux
+        ci_env.pop("DISPLAY", None)
 
-    deadline = time.time() + timeout        # ── FIX 3: Set deadline BEFORE Popen
+    # Set deadline BEFORE launching so the full budget is available
+    deadline = time.time() + timeout
 
     try:
         process = subprocess.Popen(
@@ -326,12 +358,9 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
             encoding="utf-8",
             errors="replace",
             env=ci_env,
-            # shell=True is needed on Windows so that script wrappers like
-            # solara.cmd / solara.exe are resolved via PATH correctly.
             shell=(sys.platform == "win32"),
         )
     except FileNotFoundError:
-        # Fallback: retry with shell=True (covers edge cases on all platforms)
         try:
             process = subprocess.Popen(
                 " ".join(cmd),
@@ -345,12 +374,6 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
                 shell=True,
             )
         except Exception:
-            if cmd and cmd[0] == "mesa":
-                return ExampleResult(
-                    name=meta.name,
-                    status=STATUS_FAIL,
-                    notes="Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
-                )
             return ExampleResult(
                 name=meta.name,
                 status=STATUS_FAIL,
@@ -359,7 +382,7 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
     except Exception as exc:
         return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=str(exc))
 
-    # ── Drain output in background threads while waiting ────────────────────
+    # Drain stdout/stderr in background threads so output never blocks Popen
     import threading
 
     stdout_lines: list[str] = []
@@ -377,11 +400,12 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
     t_out.start()
     t_err.start()
 
-    # Poll every 0.5s during boot window; catch errors as soon as they appear
+    # ── Boot-wait polling loop ───────────────────────────────────────────────
     poll_interval = 0.5
     elapsed = 0.0
     while elapsed < SERVER_BOOT_WAIT:
-        # ── FIX 4: Also respect deadline during the boot-wait polling loop ───
+
+        # Respect overall deadline even during boot wait
         if time.time() >= deadline:
             _terminate(process, meta.port)
             t_out.join(timeout=2)
@@ -408,7 +432,6 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
             return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=err_match)
 
         if process.poll() is not None:
-            # Process already exited — wait for drain threads to flush all output
             process.wait()
             t_out.join(timeout=3)
             t_err.join(timeout=3)
@@ -418,7 +441,7 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
             note = err_match if err_match else f"Process exited early (code {process.returncode})"
             return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=note)
 
-    # ── Final error scan before health-check ────────────────────────────────
+    # ── Final check: did process exit at end of boot window? ────────────────
     if process.poll() is not None:
         process.wait()
         t_out.join(timeout=3)
@@ -429,7 +452,7 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
         note = err_match if err_match else f"Process exited early (code {process.returncode})"
         return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=note)
 
-    # ── HTTP health-check ────────────────────────────────────────────────────
+    # ── Pre health-check deadline guard ─────────────────────────────────────
     if time.time() >= deadline:
         _terminate(process, meta.port)
         t_out.join(timeout=2)
@@ -444,10 +467,9 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
             notes=f"Timed out before health-check after {timeout}s",
         )
 
-    # ── FIX 1 applied here: pass deadline into check_server ─────────────────
+    # ── HTTP health-check ────────────────────────────────────────────────────
     server_ok = check_server(meta.port, deadline=deadline)
 
-    # ── Terminate ────────────────────────────────────────────────────────────
     _terminate(process, meta.port)
     t_out.join(timeout=2)
     t_err.join(timeout=2)
@@ -469,34 +491,29 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
     )
 
 
+# ---------------------------------------------------------------------------
+# 8. Process cleanup
+# ---------------------------------------------------------------------------
 def _kill_port(port: int) -> None:
-    """Force-kill any process still listening on the given port (cross-platform)."""
+    """Force-kill any process still listening on the given port."""
     import signal as _signal
 
     if sys.platform == "win32":
         try:
-            out = subprocess.check_output(
-                ["netstat", "-ano"],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            )
+            out = subprocess.check_output(["netstat", "-ano"], text=True, stderr=subprocess.DEVNULL)
             for line in out.splitlines():
                 if f":{port}" in line and "LISTENING" in line:
-                    parts = line.strip().split()
-                    pid = int(parts[-1])
+                    pid = int(line.strip().split()[-1])
                     subprocess.call(
                         ["taskkill", "/F", "/PID", str(pid)],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     )
         except Exception:
             pass
     else:
         try:
             out = subprocess.check_output(
-                ["lsof", "-ti", f"tcp:{port}"],
-                text=True,
-                stderr=subprocess.DEVNULL,
+                ["lsof", "-ti", f"tcp:{port}"], text=True, stderr=subprocess.DEVNULL,
             )
             for pid_str in out.strip().splitlines():
                 try:
@@ -508,7 +525,7 @@ def _kill_port(port: int) -> None:
 
 
 def _terminate(process: subprocess.Popen, port: int = 0) -> None:
-    """Cleanly terminate a process, all its children, and free the port."""
+    """Terminate a process, kill its children, and free the port."""
     try:
         process.terminate()
         try:
@@ -521,19 +538,19 @@ def _terminate(process: subprocess.Popen, port: int = 0) -> None:
 
     # Kill child processes on POSIX
     try:
-        import signal, os
+        import signal
         os.killpg(os.getpgid(process.pid), signal.SIGTERM)
     except Exception:
         pass
 
-    # Ensure the port is free regardless of what happened above
     if port:
         _kill_port(port)
-        time.sleep(0.5)  # brief pause so the OS reclaims the socket
+        time.sleep(1.5)  # FIX: increased from 0.5s — CI runners need more time
+                         # to fully reclaim the socket before the next example
 
 
 # ---------------------------------------------------------------------------
-# 6. Report generation
+# 9. Report generation
 # ---------------------------------------------------------------------------
 def generate_report(
     results: list[ExampleResult],
@@ -541,13 +558,12 @@ def generate_report(
     run_meta: dict,
     output_json: str = "validation_report.json",
 ) -> None:
-    """Print a formatted summary table and write a full JSON report."""
+    """Print a summary table to console and write a full JSON report to disk."""
 
     passes   = sum(1 for r in results if r.status == STATUS_PASS)
     fails    = sum(1 for r in results if r.status == STATUS_FAIL)
     timeouts = sum(1 for r in results if r.status == STATUS_TIMEOUT)
 
-    # ── Console table ────────────────────────────────────────────────────────
     col_name = max(max((len(r.name) for r in results), default=0), 20)
     header   = f"{'Example Name':<{col_name}}  {'Status':<8}  Notes"
     print("\n" + "=" * (len(header) + 4))
@@ -562,9 +578,7 @@ def generate_report(
     print(f"  {STATUS_TIMEOUT:<8}: {timeouts}")
     print()
 
-    # ── Build JSON payload ───────────────────────────────────────────────────
     meta_by_name = {m.name: m for m in examples}
-
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "run": run_meta,
@@ -599,25 +613,17 @@ def generate_report(
 # ---------------------------------------------------------------------------
 # Main orchestration
 # ---------------------------------------------------------------------------
-def _resolve_output_path(cli_value):
+def _resolve_output_path(cli_value: Optional[str]) -> tuple[str, str]:
     """
-    Determine the JSON report output path and mesa mode label.
-
-    Precedence (highest to lowest):
-      1. --output-json CLI argument  (explicit override)
-      2. MESA_VERSION_LABEL env var  (set by GitHub Actions matrix)
-      3. Hardcoded default           (local runs)
-
-    Returns (output_path, mesa_label).
+    Determine the JSON report output path and mesa label.
+    Precedence: CLI arg > MESA_VERSION_LABEL env var > hardcoded default.
     """
     mesa_label = os.getenv("MESA_VERSION_LABEL", "").strip()
 
     if cli_value:
         return cli_value, mesa_label or "local"
-
     if mesa_label:
         return f"example_validation_results_{mesa_label}.json", mesa_label
-
     return "example_validation_results(declared-deps).json", "local"
 
 
@@ -636,25 +642,24 @@ def main() -> int:
     output_json, mesa_label = _resolve_output_path(args.output_json)
 
     print("mesa-examples Validator")
-    print(f"  Examples dir      : {args.examples_dir}")
-    print(f"  Timeout           : {args.timeout}s per example")
-    print(f"  JSON output       : {output_json}")
+    print(f"  Examples dir : {args.examples_dir}")
+    print(f"  Timeout      : {args.timeout}s per example")
+    print(f"  JSON output  : {output_json}")
     if mesa_label != "local":
-        print(f"  Mesa validation mode: {mesa_label}")
+        print(f"  Mesa label   : {mesa_label}")
     print()
 
-    # ── Hard fail: examples directory doesn't exist ──────────────────────────
+    # Hard fail — directory doesn't exist, something is wrong with the setup
     if not os.path.isdir(args.examples_dir):
         print(f"ERROR: Examples directory not found: {args.examples_dir}")
         return 1
 
-    # ── Discover ─────────────────────────────────────────────────────────────
     examples = discover_examples(args.examples_dir)
     print(f"Found {len(examples)} example(s).\n")
 
-    # ── Hard fail: no examples found is likely a config mistake ──────────────
+    # Hard fail — no examples found is almost always a config mistake
     if not examples:
-        print("ERROR: No examples found — check your --examples-dir path or example.yaml files.")
+        print("ERROR: No examples found — check --examples-dir or example.yaml files.")
         return 1
 
     results: list[ExampleResult] = []
@@ -662,8 +667,15 @@ def main() -> int:
     for meta in examples:
         print(f"[ {meta.name} ]  ({meta.path})")
 
-        python_exec = create_virtualenv(meta)
+        # Create venv and install solara into it
+        try:
+            python_exec = create_virtualenv(meta)
+        except Exception as exc:
+            print(f"  Virtualenv creation failed: {exc}")
+            results.append(ExampleResult(name=meta.name, status=STATUS_FAIL, notes=f"Venv error: {exc}"))
+            continue
 
+        # Install example-specific dependencies on top of solara
         if not args.skip_install:
             ok, err = install_dependencies(meta, python_exec)
             if not ok:
@@ -671,13 +683,14 @@ def main() -> int:
                 results.append(ExampleResult(name=meta.name, status=STATUS_FAIL, notes=err))
                 continue
 
-        result = run_example(meta, timeout=args.timeout)
+        # FIX: Pass python_exec into run_example so it flows into
+        # _build_command() and the venv solara binary gets resolved correctly.
+        result = run_example(meta, python_exec=python_exec, timeout=args.timeout)
         icon = "PASS" if result.status == STATUS_PASS else ("TIME" if result.status == STATUS_TIMEOUT else "FAIL")
         print(f"  [{icon}]" + (f"  {result.notes}" if result.notes else ""))
         results.append(result)
         print()
 
-    # ── Report ────────────────────────────────────────────────────────────────
     run_meta = {
         "examples_dir":       args.examples_dir,
         "timeout_seconds":    args.timeout,
@@ -688,11 +701,9 @@ def main() -> int:
     }
     generate_report(results, examples, run_meta, output_json=output_json)
 
-    # ── Always exit 0 so CI completes and uploads the report ─────────────────
-    # Individual pass/fail/timeout results are captured in the JSON report.
+    # Always exit 0 — per-example results are captured in the JSON report.
     # CI should never be blocked just because some examples are broken.
-    # The only hard failures are script-level issues (missing dir, no examples)
-    # which are handled above with explicit return 1.
+    # Only hard script-level failures (above) return 1.
     return 0
 
 
