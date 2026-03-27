@@ -54,7 +54,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add example_validation_results_ci.json
+          git add example_validation_results(latest-deps).json
           git diff --staged --quiet || git commit -m "ci: update validation report [skip ci]"
           git push
         env:
@@ -116,7 +116,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add example_validation_results_ci.json
+          git add example_validation_results(declared-deps).json
           git diff --staged --quiet || git commit -m "ci: update validation report [skip ci]"
           git push
         env:
