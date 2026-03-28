@@ -62,7 +62,7 @@ jobs:
 
 
   validate-using-declared-deps:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
 
     strategy:
       matrix:
