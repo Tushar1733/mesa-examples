@@ -176,7 +176,7 @@ def load_metadata(example_path: str) -> Optional[ExampleMetadata]:
 
     return ExampleMetadata(
         name=raw.get("name", os.path.basename(example_path)),
-        path=example_path,
+        path=os.path.abspath(example_path),
         requirements=raw.get("requirements"),
         run=raw.get("run"),
         port=int(raw.get("port", 8765)),
@@ -665,12 +665,18 @@ def main() -> int:
     output_json, mesa_label = _resolve_output_path(args.output_json)
 
     print("mesa-examples Validator")
+    print(f"  Working dir  : {os.getcwd()}")
+    print(f"  Script dir   : {os.path.dirname(os.path.abspath(__file__))}")
     print(f"  Examples dir : {args.examples_dir}")
     print(f"  Timeout      : {args.timeout}s per example")
     print(f"  JSON output  : {output_json}")
     if mesa_label != "local":
         print(f"  Mesa label   : {mesa_label}")
     print()
+
+    # Resolve to absolute path so all downstream path joins work correctly
+    # regardless of what directory CI runs the script from.
+    args.examples_dir = os.path.abspath(args.examples_dir)
 
     # Hard fail — directory doesn't exist, something is wrong with the setup
     if not os.path.isdir(args.examples_dir):
