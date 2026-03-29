@@ -136,13 +136,31 @@ def create_virtualenv(meta: ExampleMetadata) -> str:
             check=True,
             timeout=60,
         )
-        # Always install solara so 'solara run app.py' is always resolvable
-        print(f"  Installing solara into venv for {meta.name} …")
+        # Always install solara and mesa so every example has its core deps.
+        # mesa is not on PyPI under 'mesa' for all versions — we install it
+        # from the local repo so the venv uses the in-development version.
+        print(f"  Installing solara + mesa into venv for {meta.name} …")
         subprocess.run(
             [python_exec, "-m", "pip", "install", "solara", "--quiet"],
             check=True,
             timeout=120,  # solara has many deps — give it extra time
         )
+        # Install mesa from the local repo (editable) so venv picks up the
+        # in-development version rather than a potentially stale PyPI release.
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if os.path.isfile(os.path.join(repo_root, "pyproject.toml")) or            os.path.isfile(os.path.join(repo_root, "setup.py")):
+            subprocess.run(
+                [python_exec, "-m", "pip", "install", "-e", repo_root, "--quiet"],
+                check=True,
+                timeout=120,
+            )
+        else:
+            # Fallback: install mesa from PyPI if no local repo found
+            subprocess.run(
+                [python_exec, "-m", "pip", "install", "mesa", "--quiet"],
+                check=True,
+                timeout=120,
+            )
 
     return python_exec
 
