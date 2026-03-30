@@ -89,10 +89,19 @@ class ExampleMetadata:
 
 
 @dataclass
+class StageResult:
+    """Outcome of a single validation stage."""
+    passed: bool
+    notes: str = ""
+
+
+@dataclass
 class ExampleResult:
     name: str
     status: str
     notes: str = ""
+    # Model unit-test stage result (None if --skip-model-test)
+    stage_model_test: Optional[StageResult] = None
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +164,7 @@ def _filter_requirements(req_file: str) -> list[str]:
             if not line or line.startswith("#"):
                 continue
             # Extract the bare package name (before any version specifier)
-            pkg_name = line.split("~=")[0].split("==")[0].split(">=")[0].split("<=")[0].split("!=")[0].split(">")[0].split("<")[0].split("[")[0].strip().lower()
+            pkg_name = line.split("~=")[0].split("==")[0].split(">=")[0]                            .split("<=")[0].split("!=")[0].split(">")[0]                            .split("<")[0].split("[")[0].strip().lower()
             if pkg_name in SKIP_PACKAGES:
                 print(f"    Skipping {line!r} (provided by repo/environment)")
                 continue
@@ -226,11 +235,7 @@ def detect_errors(text: str) -> Optional[str]:
 
 
 def check_server(port: int, retries: int = 5, delay: float = 1.0) -> bool:
-    """
-    Send an HTTP GET to localhost:<port>.
-    Returns True if any attempt gets a 200 response.
-    Each attempt has a short timeout so we don't burn the example deadline.
-    """
+
     url = f"http://localhost:{port}"
     for attempt in range(1, retries + 1):
         try:
@@ -257,7 +262,8 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
     except ValueError as exc:
         return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=str(exc))
 
-    print(f"  Running: {' '.join(cmd)}")
+    print(f"  Running : {' '.join(cmd)}")
+    print(f"  Step 1  : Starting server process...")
 
     # Build a CI-safe environment: unbuffered Python, no browser, no display
     ci_env = os.environ.copy()
@@ -265,8 +271,8 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
     ci_env["PYTHONDONTWRITEBYTECODE"] = "1" # skip .pyc files
     ci_env["BROWSER"] = "echo"              # prevent any browser from opening
     ci_env["MPLBACKEND"] = "Agg"            # non-interactive matplotlib backend
-    if sys.platform != "win32":
-        ci_env.pop("DISPLAY", None)         # suppress GUI on headless Linux
+    # On Linux CI, DISPLAY=:99 is set by Xvfb — preserve it.
+    # On Windows there is no DISPLAY variable, so nothing to do.
 
     try:
         process = subprocess.Popen(
@@ -324,6 +330,7 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
     t_out.start()
     t_err.start()
 
+    print(f"  Step 2  : Waiting up to {SERVER_BOOT_WAIT}s for server to boot (scanning for errors)...")
     # Poll every 0.5s during boot window; catch errors as soon as they appear
     poll_interval = 0.5
     elapsed = 0.0
@@ -334,6 +341,7 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
         combined = "".join(stdout_lines) + "".join(stderr_lines)
         err_match = detect_errors(combined)
         if err_match:
+            print(f"  Step 2  : Error detected in output -> {err_match}")
             _terminate(process, meta.port)
             t_out.join(timeout=2)
             t_err.join(timeout=2)
@@ -341,6 +349,7 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
 
         if process.poll() is not None:
             # Process already exited — wait for drain threads to flush all output
+            print(f"  Step 2  : Process exited early (code {process.returncode}), draining output...")
             process.wait()          # ensure pipes are fully closed
             t_out.join(timeout=3)
             t_err.join(timeout=3)
@@ -351,6 +360,7 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
             note = err_match if err_match else f"Process exited early (code {process.returncode})"
             return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=note)
 
+    print(f"  Step 3  : Boot window complete. Checking for late errors...")
     # ── Step 4b: Final error scan before health-check ───────────────────────
     # One last drain in case the process just exited at the end of the boot window
     if process.poll() is not None:
@@ -375,9 +385,14 @@ def run_example(meta: ExampleMetadata, timeout: int = DEFAULT_TIMEOUT) -> Exampl
             return ExampleResult(name=meta.name, status=STATUS_FAIL, notes=err_match)
         return ExampleResult(name=meta.name, status=STATUS_TIMEOUT, notes="Timed out before health-check")
 
+    print(f"  Step 4  : Sending HTTP health-check to http://localhost:{meta.port} ...")
     server_ok = check_server(meta.port)
 
     # ── Step 6: Terminate ────────────────────────────────────────────────────
+    if server_ok:
+        print(f"  Step 5  : HTTP 200 received. Stopping server...")
+    else:
+        print(f"  Step 5  : No HTTP 200 on port {meta.port}. Stopping server...")
     _terminate(process, meta.port)
     t_out.join(timeout=2)
     t_err.join(timeout=2)
@@ -455,6 +470,216 @@ def _terminate(process: subprocess.Popen, port: int = 0) -> None:
         time.sleep(0.5)  # brief pause so the OS reclaims the socket
 
 
+
+# ---------------------------------------------------------------------------
+# Stage A: Model unit test
+# ---------------------------------------------------------------------------
+
+def _write_model_test_script(script_path: str) -> None:
+    """Write the self-contained model-test runner to a temp file."""
+    script = [
+        "import sys, os, json, inspect, traceback, importlib.util",
+        "",
+        "example_path = sys.argv[1]",
+        "model_file   = sys.argv[2]",
+        "steps        = int(sys.argv[3])",
+        "",
+        "# ── Path setup ────────────────────────────────────────────────────",
+        "# Always add the example dir AND its parent so both flat and nested",
+        "# package structures resolve correctly.",
+        "parent_path = os.path.dirname(example_path)",
+        "for p in (example_path, parent_path):",
+        "    if p not in sys.path:",
+        "        sys.path.insert(0, p)",
+        "os.chdir(example_path)",
+        "",
+        "# ── Detect nested package layout ──────────────────────────────────",
+        "# If model.py lives inside examples/foo/foo/model.py, the package",
+        "# name is the inner folder name and we must register it so that",
+        "# relative imports like 'from .agent import X' resolve correctly.",
+        "model_dir    = os.path.dirname(os.path.abspath(model_file))",
+        "is_nested    = os.path.isfile(os.path.join(model_dir, '__init__.py'))",
+        "package_name = os.path.basename(model_dir) if is_nested else None",
+        "",
+        "# ── Load model module ─────────────────────────────────────────────",
+        "try:",
+        "    if is_nested:",
+        "        # Load the whole package first so relative imports work",
+        "        pkg_init = os.path.join(model_dir, '__init__.py')",
+        "        pkg_spec = importlib.util.spec_from_file_location(",
+        "            package_name, pkg_init,",
+        "            submodule_search_locations=[model_dir],",
+        "        )",
+        "        pkg_mod = importlib.util.module_from_spec(pkg_spec)",
+        "        sys.modules[package_name] = pkg_mod",
+        "        pkg_spec.loader.exec_module(pkg_mod)",
+        "        # Now load model.py as package_name.model",
+        "        full_name = f'{package_name}.model'",
+        "        spec = importlib.util.spec_from_file_location(",
+        "            full_name, model_file,",
+        "            submodule_search_locations=[model_dir],",
+        "        )",
+        "        mod = importlib.util.module_from_spec(spec)",
+        "        mod.__package__ = package_name",
+        "        sys.modules[full_name] = mod",
+        "        spec.loader.exec_module(mod)",
+        "    else:",
+        "        # Flat layout: model.py sits directly in the example dir",
+        "        spec = importlib.util.spec_from_file_location('model', model_file)",
+        "        mod  = importlib.util.module_from_spec(spec)",
+        "        sys.modules['model'] = mod",
+        "        spec.loader.exec_module(mod)",
+        "except Exception as e:",
+        "    print(f'IMPORT_ERROR: {e}', flush=True)",
+        "    sys.exit(1)",
+        "",
+        "# Find the mesa.Model subclass",
+        "import mesa",
+        "ModelClass = next(",
+        "    (v for v in vars(mod).values()",
+        "     if isinstance(v, type) and issubclass(v, mesa.Model) and v is not mesa.Model),",
+        "    None,",
+        ")",
+        "if ModelClass is None:",
+        "    print('NO_MODEL_CLASS', flush=True)",
+        "    sys.exit(1)",
+        "",
+        "# Read default values straight from __init__ signature",
+        "try:",
+        "    sig    = inspect.signature(ModelClass.__init__)",
+        "    kwargs = {}",
+        "    missing = []",
+        "    for pname, param in sig.parameters.items():",
+        "        if pname == 'self':",
+        "            continue",
+        "        if param.default is not inspect.Parameter.empty:",
+        "            kwargs[pname] = param.default",
+        "        else:",
+        "            missing.append(pname)",
+        "    if missing:",
+        "        print(f'MISSING_PARAMS: {missing}', flush=True)",
+        "        sys.exit(3)",
+        "    print(f'PARAMS: {json.dumps({k: repr(v) for k, v in kwargs.items()})}', flush=True)",
+        "except (ValueError, TypeError) as e:",
+        "    print(f'SIG_ERROR: {e}', flush=True)",
+        "    sys.exit(1)",
+        "",
+        "# Run the model",
+        "try:",
+        "    model = ModelClass(**kwargs)",
+        "    for _ in range(steps):",
+        "        model.step()",
+        "    print('OK', flush=True)",
+        "except TypeError as e:",
+        "    print(f'INIT_ERROR: {e}', flush=True)",
+        "    traceback.print_exc()",
+        "    sys.exit(2)",
+        "except Exception:",
+        "    traceback.print_exc()",
+        "    sys.exit(2)",
+    ]
+    with open(script_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(script))
+
+
+def run_model_test(meta: ExampleMetadata, steps: int = 5) -> StageResult:
+    """
+    Import model.py, read default parameter values directly from
+    Model.__init__ signature, instantiate with those defaults,
+    and call model.step() N times.
+    """
+    import tempfile
+
+    # Check flat layout first: examples/foo/model.py
+    model_file = os.path.join(meta.path, "model.py")
+    if not os.path.isfile(model_file):
+        # Fall back to nested layout: examples/foo/foo/model.py
+        example_name = os.path.basename(meta.path)
+        nested = os.path.join(meta.path, example_name, "model.py")
+        if os.path.isfile(nested):
+            model_file = nested
+        else:
+            # Last resort: walk and find any model.py under meta.path
+            found = [
+                os.path.join(r, "model.py")
+                for r, _, fs in os.walk(meta.path) if "model.py" in fs
+            ]
+            if not found:
+                return StageResult(passed=False, notes="model.py not found anywhere under example path")
+            model_file = found[0]
+
+    ci_env = os.environ.copy()
+    ci_env["PYTHONUNBUFFERED"] = "1"
+    ci_env["MPLBACKEND"]       = "Agg"
+    ci_env["BROWSER"]          = "echo"
+
+    with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as tmp:
+        tmp_path = tmp.name
+    try:
+        _write_model_test_script(tmp_path)
+        result = subprocess.run(
+            [
+                sys.executable, tmp_path,
+                os.path.abspath(meta.path),
+                os.path.abspath(model_file),
+                str(steps),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            env=ci_env,
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    combined = result.stdout + result.stderr
+
+    # Parse and log the params that were used
+    params_str = ""
+    for line in result.stdout.splitlines():
+        if line.startswith("PARAMS: "):
+            try:
+                params = json.loads(line[len("PARAMS: "):])
+                params_str = ", ".join(f"{k}={v}" for k, v in list(params.items())[:5])
+                if len(params) > 5:
+                    params_str += f" (+{len(params)-5} more)"
+            except Exception:
+                pass
+
+    # Classify outcome
+    if "OK" in result.stdout:
+        note = f"step() x{steps} passed"
+        if params_str:
+            note += f"  |  {params_str}"
+        return StageResult(passed=True, notes=note)
+
+    if "MISSING_PARAMS" in combined:
+        line = next((l for l in combined.splitlines() if "MISSING_PARAMS" in l), "")
+        params = line.replace("MISSING_PARAMS: ", "")
+        return StageResult(passed=False, notes=f"Model.__init__ has required params with no default: {params}")
+
+    if "IMPORT_ERROR" in combined:
+        line = next((l for l in combined.splitlines() if "IMPORT_ERROR" in l), "")
+        return StageResult(passed=False, notes=line.replace("IMPORT_ERROR: ", "")[:120])
+
+    if "INIT_ERROR" in combined:
+        line = next((l for l in combined.splitlines() if "INIT_ERROR" in l), "")
+        return StageResult(passed=False, notes=line.replace("INIT_ERROR: ", "")[:120])
+
+    if "NO_MODEL_CLASS" in combined:
+        return StageResult(passed=False, notes="No mesa.Model subclass found in model.py")
+
+    err_match = detect_errors(combined)
+    note = err_match if err_match else (
+        result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "Unknown error"
+    )
+    return StageResult(passed=False, notes=note[:120])
+
 # ---------------------------------------------------------------------------
 # 6. Report generation
 # ---------------------------------------------------------------------------
@@ -470,22 +695,60 @@ def generate_report(
     fails    = sum(1 for r in results if r.status == STATUS_FAIL)
     timeouts = sum(1 for r in results if r.status == STATUS_TIMEOUT)
 
-    # ── Console table ────────────────────────────────────────────────────────
-    col_name = max(max((len(r.name) for r in results), default=0), 20)
-    header   = f"{'Example Name':<{col_name}}  {'Status':<8}  Notes"
-    print("\n" + "=" * (len(header) + 4))
+    # Model-test (logical behaviour) counts
+    model_tested  = [r for r in results if r.stage_model_test is not None]
+    model_passed  = sum(1 for r in model_tested if r.stage_model_test.passed)
+    model_failed  = sum(1 for r in model_tested if not r.stage_model_test.passed)
+    model_skipped = len(results) - len(model_tested)
+
+    # ── Console table ─────────────────────────────────────────────────────────
+    col_name   = max(max((len(r.name) for r in results), default=0), 20)
+    col_server = 8
+    col_model  = 10
+
+    header = (
+        f"{'Example Name':<{col_name}}  "
+        f"{'Server':<{col_server}}  "
+        f"{'Model Test':<{col_model}}  "
+        f"Notes"
+    )
+    sep = "=" * (len(header) + 4)
+    print("\n" + sep)
     print(header)
     print("-" * (len(header) + 4))
+
     for r in results:
-        print(f"{r.name:<{col_name}}  {r.status:<8}  {r.notes[:60] if r.notes else ''}")
-    print("=" * (len(header) + 4))
-    print(f"\nTotal : {len(results)}")
-    print(f"  {STATUS_PASS:<8}: {passes}")
-    print(f"  {STATUS_FAIL:<8}: {fails}")
-    print(f"  {STATUS_TIMEOUT:<8}: {timeouts}")
+        server_icon = r.status
+        if r.stage_model_test is not None:
+            model_icon = "PASS" if r.stage_model_test.passed else "FAIL"
+        else:
+            model_icon = "SKIPPED"
+        notes_str = r.notes[:50] if r.notes else ""
+        print(
+            f"{r.name:<{col_name}}  "
+            f"{server_icon:<{col_server}}  "
+            f"{model_icon:<{col_model}}  "
+            f"{notes_str}"
+        )
+
+    print(sep)
+
+    # ── Summary block ─────────────────────────────────────────────────────────
+    print(f"\nTotal examples : {len(results)}")
+    print(f"")
+    print(f"  Server boot (Solara)")
+    print(f"    {STATUS_PASS:<8}: {passes}")
+    print(f"    {STATUS_FAIL:<8}: {fails}")
+    print(f"    {STATUS_TIMEOUT:<8}: {timeouts}")
+    print(f"")
+    print(f"  Logical behaviour (model.step() test)")
+    print(f"    PASS    : {model_passed}")
+    print(f"    FAIL    : {model_failed}")
+    if model_skipped:
+        print(f"    SKIPPED : {model_skipped}  (--skip-model-test)")
     print()
 
-    # ── Build JSON payload ───────────────────────────────────────────────────
+    # ── Build JSON payload ────────────────────────────────────────────────────
     meta_by_name = {m.name: m for m in examples}
 
     report = {
@@ -493,9 +756,16 @@ def generate_report(
         "run": run_meta,
         "summary": {
             "total":   len(results),
-            "passed":  passes,
-            "failed":  fails,
-            "timeout": timeouts,
+            "server_boot": {
+                "passed":  passes,
+                "failed":  fails,
+                "timeout": timeouts,
+            },
+            "logical_behaviour": {
+                "passed":  model_passed,
+                "failed":  model_failed,
+                "skipped": model_skipped,
+            },
         },
         "examples": [
             {
@@ -508,6 +778,10 @@ def generate_report(
                 "maintainer":   meta_by_name[r.name].maintainer   if r.name in meta_by_name else None,
                 "mesa_version": meta_by_name[r.name].mesa_version if r.name in meta_by_name else None,
                 "requirements": meta_by_name[r.name].requirements if r.name in meta_by_name else None,
+                "logical_behaviour": {
+                    "passed": r.stage_model_test.passed,
+                    "notes":  r.stage_model_test.notes,
+                } if r.stage_model_test else None,
             }
             for r in results
         ],
@@ -542,7 +816,7 @@ def _resolve_output_path(cli_value):
     if mesa_label:
         return f"example_validation_results_{mesa_label}.json", mesa_label
 
-    return "example_validation_results(latest-deps).json", "local"
+    return "example_validation_results.json", "local"
 
 
 def main() -> int:
@@ -555,6 +829,10 @@ def main() -> int:
                         help="Skip pip install step (useful if deps already present)")
     parser.add_argument("--output-json", default=None,
                         help="Override report path (default: auto-named from MESA_VERSION_LABEL)")
+    parser.add_argument("--skip-model-test", action="store_true",
+                        help="Skip the model.py unit test stage")
+    parser.add_argument("--model-steps", type=int, default=5,
+                        help="Number of model.step() calls in unit test (default: 5)")
     args = parser.parse_args()
 
     # ── Resolve output path: CLI > MESA_VERSION_LABEL env var > default ───────
@@ -589,10 +867,21 @@ def main() -> int:
                 results.append(ExampleResult(name=meta.name, status=STATUS_FAIL, notes=err))
                 continue
 
-        # ── Run & validate ────────────────────────────────────────────────────
+        # ── Stage A: Model unit test ──────────────────────────────────────────
+        if not args.skip_model_test:
+            print("  [Stage A] Running model unit test ...")
+            model_result = run_model_test(meta, steps=args.model_steps)
+            icon_a = "PASS" if model_result.passed else "FAIL"
+            print(f"    [{icon_a}] {model_result.notes}")
+        else:
+            model_result = None
+
+        # ── Stage B: Server boot ─────────────────────────────────────────────
         result = run_example(meta, timeout=args.timeout)
+        result.stage_model_test = model_result
+
         icon = "PASS" if result.status == STATUS_PASS else ("TIME" if result.status == STATUS_TIMEOUT else "FAIL")
-        print(f"  [{icon}]" + (f"  {result.notes}" if result.notes else ""))
+        print(f"  [Stage B] Server boot [{icon}]" + (f"  {result.notes}" if result.notes else ""))
         results.append(result)
         print()
 
@@ -609,7 +898,7 @@ def main() -> int:
 
     # Non-zero exit if any example did not PASS
     any_failure = any(r.status != STATUS_PASS for r in results)
-    return 0 if any_failure else 1
+    return 1 if any_failure else 0
 
 
 if __name__ == "__main__":
