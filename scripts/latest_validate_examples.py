@@ -235,7 +235,11 @@ def detect_errors(text: str) -> Optional[str]:
 
 
 def check_server(port: int, retries: int = 5, delay: float = 1.0) -> bool:
-
+    """
+    Send an HTTP GET to localhost:<port>.
+    Returns True if any attempt gets a 200 response.
+    Each attempt has a short timeout so we don't burn the example deadline.
+    """
     url = f"http://localhost:{port}"
     for attempt in range(1, retries + 1):
         try:
