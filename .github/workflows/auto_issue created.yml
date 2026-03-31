@@ -6,7 +6,7 @@ on:
     types:
       - completed
   workflow_dispatch:
-  push:
+
 
 permissions:
   issues: write
