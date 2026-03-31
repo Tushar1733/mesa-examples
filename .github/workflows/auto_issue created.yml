@@ -1,9 +1,12 @@
 name: Example Health Monitor
 
 on:
-  push:
-  pull_request:
+  workflow_run:
+    workflows: ["Validate Examples"]
+    types:
+      - completed
   workflow_dispatch:
+  push:
 
 permissions:
   issues: write
@@ -11,11 +14,12 @@ permissions:
 
 jobs:
   check-examples:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Run analysis
         run: python scripts/generate_issues.py
@@ -31,13 +35,13 @@ jobs:
               fs.readFileSync('issues_to_create.json', 'utf8')
             );
 
-            for (const issue of issues) {
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open"
+            });
 
-              const existing = await github.rest.issues.listForRepo({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                state: "open"
-              });
+            for (const issue of issues) {
 
               const exists = existing.data.some(
                 i => i.title === issue.title
