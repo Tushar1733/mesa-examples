@@ -1,12 +1,9 @@
 name: Example Health Monitor
 
 on:
-  workflow_run:
-    workflows: ["Validate Examples"]
-    types:
-      - completed
-  workflow_dispatch:
   push:
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   issues: write
