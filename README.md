@@ -32,7 +32,34 @@ $ pip install -U -e git+https://github.com/mesa/mesa-examples@mesa-2.x#egg=mesa-
 from mesa_models.boltzmann_wealth_model.model import BoltzmannWealthModel
 ```
 You can see the available models at [setup.cfg](https://github.com/mesa/mesa-examples/blob/main/setup.cfg).
+---
 
+## 📋 Health-dashboard for all Examples
+
+| Example | Runner | Model Test | Run Command | Mesa Req | Notes |
+|---------|:------:|:----------:|-------------|----------|-------|
+| **aco_tsp** | ✅ PASS | ✅ OK | `solara run app.py` | `>=3.0` | — |
+| **bank_reserves** | ✅ PASS | ⚠️ FAIL | `solara run app.py` | `>=3.0` | — |
+| **boltzmann_wealth_model_network** | ✅ PASS | ✅ OK | `solara run app.py` | `>=3.0` | — |
+| **caching_and_replay** | ❌ FAIL | ✅ OK | `mesa runserver` | `>=3.0` | Legacy Mesa API: 'mesa runserver' removed - mig… |
+| **charts** | ❌ FAIL | ⚠️ FAIL | `mesa runserver` | `>=2.0` | Legacy Mesa API: 'mesa runserver' removed - mig… |
+| **color_patches** | ❌ FAIL | ✅ OK | `mesa runserver` | `>=3.0` | Legacy Mesa API: 'mesa runserver' removed - mig… |
+| **conways_game_of_life_fast** | ❌ FAIL | ⚠️ FAIL | `solara run app.py` | `>=2.3` | ImportError |
+| **deffuant_weisbuch** | ✅ PASS | ✅ OK | `solara run app.py` | `>=3.0` | — |
+| **dining_philosophers** | ✅ PASS | ✅ OK | `solara run app.py` | `>=3.0` | — |
+| **emperor_dilemma** | ❌ FAIL | ✅ OK | `solara run app.py` | `>=3.0` | ImportError: relative import |
+| **Forest Fire Model** | ✅ PASS | ✅ OK | `solara run app.py` | `>=3.0` | — |
+| **hex_ant** | ❌ FAIL | ⚠️ FAIL | `solara run app.py` | `>=3.0` | ImportError: relative import |
+| **hex_snowflake** | ❌ FAIL | ⚠️ FAIL | `mesa runserver` | `>=2.0` | Legacy Mesa API: 'mesa runserver' removed - mig… |
+| **hotelling_law** | ✅ PASS | ✅ OK | `solara run app.py` | `>=3.0` | — |
+| **humanitarian_aid_distribution** | ✅ PASS | ✅ OK | `solara run app.py` | `>=3.0` | — |
+| **rumor_mill** | ✅ PASS | ✅ OK | `solara run app.py` | `>=3.0` | — |
+| **shape_example** | ❌ FAIL | ✅ OK | `mesa runserver` | `>=3.0` | Legacy Mesa API: 'mesa runserver' removed - mig… |
+| **termites** | ❌ FAIL | ⚠️ FAIL | `solara run app.py` | `>=3.0` | TypeError |
+| **virus_antibody** | ✅ PASS | ✅ OK | `solara run app.py` | `>=3.0` | — |
+| **warehouse** | ✅ PASS | ✅ OK | `solara run app.py` | `>=3.0` | — |
+
+---
 Table of Contents
 =================
 
