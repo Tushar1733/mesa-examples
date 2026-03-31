@@ -50,7 +50,6 @@ jobs:
                   repo: context.repo.repo,
                   issue_number: existing.number,
                   labels: [
-                    "example-health",
                     issue.status
                   ]
                 });
