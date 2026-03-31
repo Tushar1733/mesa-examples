@@ -36,7 +36,7 @@ You can see the available models at [setup.cfg](https://github.com/mesa/mesa-exa
 
 ## 📋 Health-dashboard for all Examples
 
-| Example | Runner | Model Test | Run Command | Mesa Req | Notes |
+| Example | server-run | Model Test | Run Command | Mesa Req | Notes |
 |---------|:------:|:----------:|-------------|----------|-------|
 | **aco_tsp** | ✅ PASS | ✅ OK | `solara run app.py` | `>=3.0` | — |
 | **bank_reserves** | ✅ PASS | ⚠️ FAIL | `solara run app.py` | `>=3.0` | — |
