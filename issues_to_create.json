@@ -1,42 +1,52 @@
 [
-  {
-    "title": "Example issue: bank_reserves",
-    "body": "\nExample **bank_reserves** has status **broken**.\n\nDeclared server: PASS\nDeclared model: False\n\nLatest server: PASS\nLatest model: False\n\nMaintainer: @your_username\n"
-  },
-  {
-    "title": "Example issue: caching_and_replay",
-    "body": "\nExample **caching_and_replay** has status **needs_upgrade**.\n\nDeclared server: PASS\nDeclared model: True\n\nLatest server: FAIL\nLatest model: True\n\nMaintainer: @your_username\n"
-  },
-  {
-    "title": "Example issue: charts",
-    "body": "\nExample **charts** has status **needs_upgrade**.\n\nDeclared server: PASS\nDeclared model: True\n\nLatest server: FAIL\nLatest model: False\n\nMaintainer: @your_username\n"
-  },
-  {
-    "title": "Example issue: color_patches",
-    "body": "\nExample **color_patches** has status **needs_upgrade**.\n\nDeclared server: PASS\nDeclared model: True\n\nLatest server: FAIL\nLatest model: True\n\nMaintainer: @your_username\n"
-  },
-  {
-    "title": "Example issue: conways_game_of_life_fast",
-    "body": "\nExample **conways_game_of_life_fast** has status **needs_upgrade**.\n\nDeclared server: PASS\nDeclared model: True\n\nLatest server: FAIL\nLatest model: False\n\nMaintainer: @your_username\n"
-  },
-  {
-    "title": "Example issue: emperor_dilemma",
-    "body": "\nExample **emperor_dilemma** has status **broken**.\n\nDeclared server: FAIL\nDeclared model: True\n\nLatest server: FAIL\nLatest model: True\n\nMaintainer: @your_username\n"
-  },
-  {
-    "title": "Example issue: hex_ant",
-    "body": "\nExample **hex_ant** has status **broken**.\n\nDeclared server: FAIL\nDeclared model: False\n\nLatest server: FAIL\nLatest model: False\n\nMaintainer: @your_username\n"
-  },
-  {
-    "title": "Example issue: hex_snowflake",
-    "body": "\nExample **hex_snowflake** has status **broken**.\n\nDeclared server: FAIL\nDeclared model: False\n\nLatest server: FAIL\nLatest model: False\n\nMaintainer: @your_username\n"
-  },
-  {
-    "title": "Example issue: shape_example",
-    "body": "\nExample **shape_example** has status **broken**.\n\nDeclared server: FAIL\nDeclared model: True\n\nLatest server: FAIL\nLatest model: True\n\nMaintainer: @your_username\n"
-  },
-  {
-    "title": "Example issue: termites",
-    "body": "\nExample **termites** has status **broken**.\n\nDeclared server: FAIL\nDeclared model: False\n\nLatest server: FAIL\nLatest model: False\n\nMaintainer: @your_username\n"
-  }
+    {
+        "title": "Example issue: bank_reserves",
+        "body": "Example **bank_reserves** has status **broken**.\n\nDeclared server: PASS\nDeclared model: False\n\nLatest server: PASS\nLatest model: False\n\nMaintainer: @your_username",
+        "status": "broken"
+    },
+    {
+        "title": "Example issue: caching_and_replay",
+        "body": "Example **caching_and_replay** has status **needs_upgrade**.\n\nDeclared server: PASS\nDeclared model: True\n\nLatest server: FAIL\nLatest model: True\n\nMaintainer: @your_username",
+        "status": "needs_upgrade"
+    },
+    {
+        "title": "Example issue: charts",
+        "body": "Example **charts** has status **needs_upgrade**.\n\nDeclared server: PASS\nDeclared model: True\n\nLatest server: FAIL\nLatest model: False\n\nMaintainer: @your_username",
+        "status": "needs_upgrade"
+    },
+    {
+        "title": "Example issue: color_patches",
+        "body": "Example **color_patches** has status **needs_upgrade**.\n\nDeclared server: PASS\nDeclared model: True\n\nLatest server: FAIL\nLatest model: True\n\nMaintainer: @your_username",
+        "status": "needs_upgrade"
+    },
+    {
+        "title": "Example issue: conways_game_of_life_fast",
+        "body": "Example **conways_game_of_life_fast** has status **needs_upgrade**.\n\nDeclared server: PASS\nDeclared model: True\n\nLatest server: FAIL\nLatest model: False\n\nMaintainer: @your_username",
+        "status": "needs_upgrade"
+    },
+    {
+        "title": "Example issue: emperor_dilemma",
+        "body": "Example **emperor_dilemma** has status **broken**.\n\nDeclared server: FAIL\nDeclared model: True\n\nLatest server: FAIL\nLatest model: True\n\nMaintainer: @your_username",
+        "status": "broken"
+    },
+    {
+        "title": "Example issue: hex_ant",
+        "body": "Example **hex_ant** has status **broken**.\n\nDeclared server: FAIL\nDeclared model: False\n\nLatest server: FAIL\nLatest model: False\n\nMaintainer: @your_username",
+        "status": "broken"
+    },
+    {
+        "title": "Example issue: hex_snowflake",
+        "body": "Example **hex_snowflake** has status **broken**.\n\nDeclared server: FAIL\nDeclared model: False\n\nLatest server: FAIL\nLatest model: False\n\nMaintainer: @your_username",
+        "status": "broken"
+    },
+    {
+        "title": "Example issue: shape_example",
+        "body": "Example **shape_example** has status **broken**.\n\nDeclared server: FAIL\nDeclared model: True\n\nLatest server: FAIL\nLatest model: True\n\nMaintainer: @your_username",
+        "status": "broken"
+    },
+    {
+        "title": "Example issue: termites",
+        "body": "Example **termites** has status **broken**.\n\nDeclared server: FAIL\nDeclared model: False\n\nLatest server: FAIL\nLatest model: False\n\nMaintainer: @your_username",
+        "status": "broken"
+    }
 ]

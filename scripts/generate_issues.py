@@ -1,6 +1,9 @@
 import json
 
-with open("example_health_report.json") as f:
+INPUT_FILE = "example_health_report.json"
+OUTPUT_FILE = "issues_to_create.json"
+
+with open(INPUT_FILE, "r") as f:
     data = json.load(f)
 
 issues = []
@@ -9,7 +12,7 @@ for example in data:
     status = example["final_status"]
 
     if status in ["needs_upgrade", "broken"]:
-        issues.append({
+        issue = {
             "title": f"Example issue: {example['name']}",
             "body": f"""
 Example **{example['name']}** has status **{status}**.
@@ -21,8 +24,13 @@ Latest server: {example['latest_server']}
 Latest model: {example['latest_model']}
 
 Maintainer: @{example['maintainer']}
-"""
-        })
+""".strip(),
+            "status": status
+        }
 
-with open("issues_to_create.json", "w") as f:
-    json.dump(issues, f, indent=2)
+        issues.append(issue)
+
+with open(OUTPUT_FILE, "w") as f:
+    json.dump(issues, f, indent=4)
+
+print(f"{len(issues)} issues written to {OUTPUT_FILE}")
