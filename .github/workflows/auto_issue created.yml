@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   check-examples:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -20,7 +19,7 @@ jobs:
       - name: Run analysis
         run: python scripts/generate_issues.py
 
-      - name: Create issues
+      - name: Create or update issues
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -31,19 +30,33 @@ jobs:
               fs.readFileSync('issues_to_create.json', 'utf8')
             );
 
-            const existing = await github.rest.issues.listForRepo({
+            const existingIssues = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              state: "open"
+              state: "open",
+              per_page: 100
             });
 
             for (const issue of issues) {
 
-              const exists = existing.data.some(
+              const existing = existingIssues.data.find(
                 i => i.title === issue.title
               );
 
-              if (!exists) {
+              if (existing) {
+
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existing.number,
+                  labels: [
+                    "example-health",
+                    issue.status
+                  ]
+                });
+
+              } else {
+
                 await github.rest.issues.create({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -54,5 +67,6 @@ jobs:
                     issue.status
                   ]
                 });
+
               }
             }
