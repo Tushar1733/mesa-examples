@@ -1,0 +1,70 @@
+name: Mesa Examples Health Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Runs every day at 06:00 UTC
+    - cron: "0 6 * * *"
+  workflow_dispatch: # allow manual trigger from the Actions UI
+
+permissions:
+  issues: write   # needed to create / comment / close issues
+  contents: read
+
+jobs:
+  validate-and-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python ───────────────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # ── 3. Install dependencies ────────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      # ── 4. Run the example validator ──────────────────────────────────────
+      #    This is your existing validation step that produces the JSON report.
+      #    Adjust the command to whatever generates your JSON file.
+      - name: Run example validation
+        run: |
+          python scripts/validate_examples.py \
+            --output "example_validation_results(latest-deps).json"
+
+      # ── 5. Generate Markdown health dashboard ─────────────────────────────
+      - name: Generate health dashboard
+        run: |
+          python generate_dashboard.py \
+            "example_validation_results(latest-deps).json" \
+            health_dashboard.md
+
+      # ── 6. Upload dashboard as artifact ───────────────────────────────────
+      - name: Upload dashboard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: health-dashboard
+          path: health_dashboard.md
+          retention-days: 30
+
+      # ── 7. Create / update / close GitHub Issues ──────────────────────────
+      - name: Sync GitHub Issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          python scripts/sync_issues.py \
+            "example_validation_results(latest-deps).json"

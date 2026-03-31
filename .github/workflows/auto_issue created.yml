@@ -1,0 +1,53 @@
+name: Example Health Monitor
+
+on:on:
+  workflow_run:
+    workflows: ["Validate Examples"]
+    types:
+      - completed
+      workflow_dispatch:
+  push:
+
+jobs:
+  check-examples:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run analysis
+        run: python scripts/generate_issues.py
+
+      - name: Create issues
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            const issues = JSON.parse(
+              fs.readFileSync('issues_to_create.json', 'utf8')
+            );
+
+            for (const issue of issues) {
+
+              const existing = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: "open"
+              });
+
+              const exists = existing.data.some(
+                i => i.title === issue.title
+              );
+
+              if (!exists) {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: issue.title,
+                  body: issue.body,
+                  labels: ["example-health"]
+                });
+              }
+            }

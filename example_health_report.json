@@ -1,0 +1,182 @@
+[
+    {
+        "name": "Forest Fire Model",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "PASS",
+        "latest_model": true,
+        "final_status": "Active-healthy"
+    },
+    {
+        "name": "aco_tsp",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "PASS",
+        "latest_model": true,
+        "final_status": "Active-healthy"
+    },
+    {
+        "name": "bank_reserves",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": false,
+        "latest_server": "PASS",
+        "latest_model": false,
+        "final_status": "broken"
+    },
+    {
+        "name": "boltzmann_wealth_model_network",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "PASS",
+        "latest_model": true,
+        "final_status": "Active-healthy"
+    },
+    {
+        "name": "caching_and_replay",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "FAIL",
+        "latest_model": true,
+        "final_status": "needs_upgrade"
+    },
+    {
+        "name": "charts",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "FAIL",
+        "latest_model": false,
+        "final_status": "needs_upgrade"
+    },
+    {
+        "name": "color_patches",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "FAIL",
+        "latest_model": true,
+        "final_status": "needs_upgrade"
+    },
+    {
+        "name": "conways_game_of_life_fast",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "FAIL",
+        "latest_model": false,
+        "final_status": "needs_upgrade"
+    },
+    {
+        "name": "deffuant_weisbuch",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "PASS",
+        "latest_model": true,
+        "final_status": "Active-healthy"
+    },
+    {
+        "name": "dining_philosophers",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "PASS",
+        "latest_model": true,
+        "final_status": "Active-healthy"
+    },
+    {
+        "name": "emperor_dilemma",
+        "maintainer": "your_username",
+        "declared_server": "FAIL",
+        "declared_model": true,
+        "latest_server": "FAIL",
+        "latest_model": true,
+        "final_status": "broken"
+    },
+    {
+        "name": "hex_ant",
+        "maintainer": "your_username",
+        "declared_server": "FAIL",
+        "declared_model": false,
+        "latest_server": "FAIL",
+        "latest_model": false,
+        "final_status": "broken"
+    },
+    {
+        "name": "hex_snowflake",
+        "maintainer": "your_username",
+        "declared_server": "FAIL",
+        "declared_model": false,
+        "latest_server": "FAIL",
+        "latest_model": false,
+        "final_status": "broken"
+    },
+    {
+        "name": "hotelling_law",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "PASS",
+        "latest_model": true,
+        "final_status": "Active-healthy"
+    },
+    {
+        "name": "humanitarian_aid_distribution",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "PASS",
+        "latest_model": true,
+        "final_status": "Active-healthy"
+    },
+    {
+        "name": "rumor_mill",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "PASS",
+        "latest_model": true,
+        "final_status": "Active-healthy"
+    },
+    {
+        "name": "shape_example",
+        "maintainer": "your_username",
+        "declared_server": "FAIL",
+        "declared_model": true,
+        "latest_server": "FAIL",
+        "latest_model": true,
+        "final_status": "broken"
+    },
+    {
+        "name": "termites",
+        "maintainer": "your_username",
+        "declared_server": "FAIL",
+        "declared_model": false,
+        "latest_server": "FAIL",
+        "latest_model": false,
+        "final_status": "broken"
+    },
+    {
+        "name": "virus_antibody",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "PASS",
+        "latest_model": true,
+        "final_status": "Active-healthy"
+    },
+    {
+        "name": "warehouse",
+        "maintainer": "your_username",
+        "declared_server": "PASS",
+        "declared_model": true,
+        "latest_server": "PASS",
+        "latest_model": true,
+        "final_status": "Active-healthy"
+    }
+]
