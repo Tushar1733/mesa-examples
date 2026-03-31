@@ -1,0 +1,319 @@
+{
+  "generated_at": "2026-03-29T22:46:38.823848+00:00",
+  "run": {
+    "examples_dir": "examples",
+    "timeout_seconds": 30,
+    "skip_install": false,
+    "mesa_version_label": "local",
+    "python": "3.14.3 (tags/v3.14.3:323c59a, Feb  3 2026, 16:04:56) [MSC v.1944 64 bit (AMD64)]",
+    "platform": "win32"
+  },
+  "summary": {
+    "total": 20,
+    "passed": 11,
+    "failed": 9,
+    "timeout": 0
+  },
+  "examples": [
+    {
+      "name": "aco_tsp",
+      "status": "PASS",
+      "notes": null,
+      "path": "examples\\aco_tsp",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  num_agents=20, max_steps=1000000, ant_alpha=1.0, ant_beta=5.0, tsp_graph=<aco_tsp.model.TSPGraph object at 0x000002C56AFE3620>"
+      }
+    },
+    {
+      "name": "bank_reserves",
+      "status": "PASS",
+      "notes": null,
+      "path": "examples\\bank_reserves",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": false,
+        "notes": "attempted relative import with no known parent package"
+      }
+    },
+    {
+      "name": "boltzmann_wealth_model_network",
+      "status": "PASS",
+      "notes": null,
+      "path": "examples\\boltzmann_wealth_model_network",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  n=7, num_nodes=10, rng=None"
+      }
+    },
+    {
+      "name": "caching_and_replay",
+      "status": "FAIL",
+      "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
+      "path": "examples\\caching_and_replay",
+      "run_command": "mesa runserver",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  height=20, width=20, homophily=3, radius=1, density=0.8 (+2 more)"
+      }
+    },
+    {
+      "name": "charts",
+      "status": "FAIL",
+      "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
+      "path": "examples\\charts",
+      "run_command": "mesa runserver",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=2.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": false,
+        "notes": "attempted relative import with no known parent package"
+      }
+    },
+    {
+      "name": "color_patches",
+      "status": "FAIL",
+      "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
+      "path": "examples\\color_patches",
+      "run_command": "mesa runserver",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  width=20, height=20"
+      }
+    },
+    {
+      "name": "conways_game_of_life_fast",
+      "status": "FAIL",
+      "notes": "ImportError",
+      "path": "examples\\conways_game_of_life_fast",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=2.3",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": false,
+        "notes": "No mesa.Model subclass found in model.py"
+      }
+    },
+    {
+      "name": "deffuant_weisbuch",
+      "status": "PASS",
+      "notes": null,
+      "path": "examples\\deffuant_weisbuch",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  n=100, epsilon=0.2, mu=0.5, rng=None"
+      }
+    },
+    {
+      "name": "dining_philosophers",
+      "status": "PASS",
+      "notes": null,
+      "path": "examples\\dining_philosophers",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  num_philosophers=5, strategy='Naive', hungry_chance=0.1, full_chance=0.2"
+      }
+    },
+    {
+      "name": "emperor_dilemma",
+      "status": "FAIL",
+      "notes": "ImportError: relative import",
+      "path": "examples\\emperor_dilemma",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  width=25, height=25, fraction_true_believers=0.05, k=0.125, homophily=False (+1 more)"
+      }
+    },
+    {
+      "name": "Forest Fire Model",
+      "status": "PASS",
+      "notes": null,
+      "path": "examples\\forest_fire",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  width=100, height=100, density=0.65, rng=None"
+      }
+    },
+    {
+      "name": "hex_ant",
+      "status": "FAIL",
+      "notes": "ImportError: relative import",
+      "path": "examples\\hex_ant",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": false,
+        "notes": "attempted relative import with no known parent package"
+      }
+    },
+    {
+      "name": "hex_snowflake",
+      "status": "FAIL",
+      "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
+      "path": "examples\\hex_snowflake",
+      "run_command": "mesa runserver",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=2.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": false,
+        "notes": "attempted relative import with no known parent package"
+      }
+    },
+    {
+      "name": "hotelling_law",
+      "status": "PASS",
+      "notes": null,
+      "path": "examples\\hotelling_law",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  n_stores=20, n_consumers=100, width=50, height=50, mode='default' (+4 more)"
+      }
+    },
+    {
+      "name": "humanitarian_aid_distribution",
+      "status": "PASS",
+      "notes": null,
+      "path": "examples\\humanitarian_aid_distribution",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  num_beneficiaries=30, num_trucks=3, width=20, height=20, rng=None (+1 more)"
+      }
+    },
+    {
+      "name": "rumor_mill",
+      "status": "PASS",
+      "notes": null,
+      "path": "examples\\rumor_mill",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  width=10, height=10, know_rumor_ratio=0.01, rumor_spread_chance=0.5, eight_neightborhood=False (+1 more)"
+      }
+    },
+    {
+      "name": "shape_example",
+      "status": "FAIL",
+      "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
+      "path": "examples\\shape_example",
+      "run_command": "mesa runserver",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  num_agents=2, width=20, height=10"
+      }
+    },
+    {
+      "name": "termites",
+      "status": "FAIL",
+      "notes": "TypeError",
+      "path": "examples\\termites",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": false,
+        "notes": "HasPropertyLayers.add_property_layer() takes 2 positional arguments but 3 were given"
+      }
+    },
+    {
+      "name": "virus_antibody",
+      "status": "PASS",
+      "notes": null,
+      "path": "examples\\virus_antibody",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  rng=None, initial_antibody=20, initial_viruses=20, width=100, height=100 (+3 more)"
+      }
+    },
+    {
+      "name": "warehouse",
+      "status": "PASS",
+      "notes": null,
+      "path": "examples\\warehouse",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  rng=42"
+      }
+    }
+  ]
+}
