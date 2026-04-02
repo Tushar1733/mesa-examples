@@ -132,7 +132,7 @@ def create_virtualenv(meta: ExampleMetadata) -> str:
             timeout=60,
         )
         subprocess.run(
-            [python_exec, "-m", "pip", "install", "--upgrade", "pip", "--quiet"],
+            [python_exec, "-m", "pip", "install", "--upgrade", "pip", "--no-cache-dir"],
             check=True,
             timeout=60,
         )
@@ -141,25 +141,25 @@ def create_virtualenv(meta: ExampleMetadata) -> str:
         # from the local repo so the venv uses the in-development version.
         print(f"  Installing solara + mesa into venv for {meta.name} …")
         subprocess.run(
-            [python_exec, "-m", "pip", "install", "solara", "--quiet"],
+            [python_exec, "-m", "pip", "install", "solara", "--no-cache-dir"],
             check=True,
-            timeout=120,  # solara has many deps — give it extra time
+            timeout=300,  # solara has many deps — give it extra time
         )
         # Install mesa from the local repo (editable) so venv picks up the
         # in-development version rather than a potentially stale PyPI release.
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if os.path.isfile(os.path.join(repo_root, "pyproject.toml")) or            os.path.isfile(os.path.join(repo_root, "setup.py")):
             subprocess.run(
-                [python_exec, "-m", "pip", "install", "-e", repo_root, "--quiet"],
+                [python_exec, "-m", "pip", "install", "-e", repo_root, "--no-cache-dir"],
                 check=True,
-                timeout=120,
+                timeout=300,
             )
         else:
             # Fallback: install mesa from PyPI if no local repo found
             subprocess.run(
-                [python_exec, "-m", "pip", "install", "mesa", "--quiet"],
+                [python_exec, "-m", "pip", "install", "mesa", "--no-cache-dir"],
                 check=True,
-                timeout=120,
+                timeout=300,
             )
 
     return python_exec
@@ -237,14 +237,23 @@ def install_dependencies(meta: ExampleMetadata, python_exec: str) -> tuple[bool,
         return True, ""
 
     print(f"  Installing {len(packages)} dependenc{'y' if len(packages) == 1 else 'ies'} from {req_file} …")
+    for pkg in packages:
+        print(f"    installing: {pkg}")
     result = subprocess.run(
-        [python_exec, "-m", "pip", "install", *packages, "--quiet"],
+        # Removed --quiet and added --no-cache-dir:
+        # --quiet was suppressing pip errors silently in CI.
+        # --no-cache-dir avoids stale cached wheels causing silent failures.
+        [python_exec, "-m", "pip", "install", *packages, "--no-cache-dir"],
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=300,  # increased: heavy packages like numpy/scipy take >120s in CI
     )
     if result.returncode != 0:
+        # Print full pip output so CI logs always show exactly what failed
+        print(f"  pip stdout:\n{result.stdout.strip()}")
+        print(f"  pip stderr:\n{result.stderr.strip()}")
         return False, f"pip install failed: {result.stderr.strip()[:300]}"
+    print(f"  pip install succeeded for {meta.name}")
     return True, ""
 
 
