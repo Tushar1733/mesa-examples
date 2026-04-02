@@ -900,8 +900,6 @@ def main() -> int:
     }
     generate_report(results, examples, run_meta, output_json=output_json)
 
-    # Non-zero exit if any example did not PASS
-    any_failure = any(r.status != STATUS_PASS for r in results)
     return 0
 
 
