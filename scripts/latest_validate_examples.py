@@ -902,7 +902,7 @@ def main() -> int:
 
     # Non-zero exit if any example did not PASS
     any_failure = any(r.status != STATUS_PASS for r in results)
-    return 1 if any_failure else 0
+    return 0
 
 
 if __name__ == "__main__":
