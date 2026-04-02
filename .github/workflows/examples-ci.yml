@@ -2,16 +2,24 @@ name: Validate Mesa Examples
 
 on:
   push:
+    paths-ignore:
+      - "example_validation_results*.json"
+      - "health_dashboard.md"
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+  issues: write
+
 jobs:
+
   validate-using-latest-deps:
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        python-version: ["3.14"]
+        python-version: ["3.12"]
 
     steps:
       - name: Checkout Repository
@@ -21,6 +29,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
 
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
@@ -39,16 +48,14 @@ jobs:
       - name: Run validator
         run: xvfb-run -a python scripts/latest_validate_examples.py
 
-
       - name: Upload validation report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: validation-report
+          name: validation-report-latest
           path: example_validation_results(latest-deps).json
           if-no-files-found: warn
-      
-          
+
       - name: Commit validation report
         if: always()
         run: |
@@ -57,8 +64,6 @@ jobs:
           git add example_validation_results(latest-deps).json
           git diff --staged --quiet || git commit -m "ci: update validation report [skip ci]"
           git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 
   validate-using-declared-deps:
@@ -66,7 +71,7 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.14"]
+        python-version: ["3.12"]
 
     steps:
       - name: Checkout Repository
@@ -76,6 +81,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
 
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
@@ -85,7 +91,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb
           sudo apt-get install -y lsof
-          
 
       - name: Install script dependencies
         run: pip install requests pyyaml solara
@@ -98,18 +103,16 @@ jobs:
 
       - name: Run validator
         env:
-          MESA_VERSION_LABEL: "ci"   
+          MESA_VERSION_LABEL: "ci"
         run: python scripts/declared_validate_examples.py --examples-dir examples --timeout 30
-
 
       - name: Upload validation report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: validation-report
+          name: validation-report-declared
           path: example_validation_results(declared-deps).json
           if-no-files-found: warn
-
 
       - name: Commit validation report
         if: always()
@@ -119,6 +122,102 @@ jobs:
           git add example_validation_results(declared-deps).json
           git diff --staged --quiet || git commit -m "ci: update validation report [skip ci]"
           git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
- 
+
+
+  check-examples:
+    needs: [validate-using-latest-deps, validate-using-declared-deps]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install requests pyyaml
+
+      - name: Run analysis
+        run: python scripts/generate_issues.py
+
+      - name: Create or update issues
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            const issues = JSON.parse(
+              fs.readFileSync('issues_to_create.json', 'utf8')
+            );
+
+            const existingIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100
+            });
+
+            for (const issue of issues) {
+
+              const existing = existingIssues.data.find(
+                i => i.title === issue.title
+              );
+
+              if (existing) {
+
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existing.number,
+                  labels: [
+                    "example-health",
+                    issue.status
+                  ]
+                });
+
+              } else {
+
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: issue.title,
+                  body: issue.body,
+                  labels: [
+                    "example-health",
+                    issue.status
+                  ]
+                });
+
+              }
+            }
+
+
+  update-dashboard:
+    needs: [check-examples]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate dashboard
+        run: python scripts/generate_dashboard_1.py
+
+      - name: Commit dashboard
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add health_dashboard.md
+          git diff --staged --quiet || git commit -m "ci: update health dashboard [skip ci]"
+          git push
