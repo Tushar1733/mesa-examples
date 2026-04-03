@@ -14,9 +14,11 @@ permissions:
 
 jobs:
 
+  # ─────────────────────────────────────────────
+  # JOB 1 — validate with latest deps
+  # ─────────────────────────────────────────────
   validate-using-latest-deps:
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -48,6 +50,22 @@ jobs:
       - name: Run validator
         run: xvfb-run -a python scripts/latest_validate_examples.py
 
+      # Confirm the JSON file was actually written by the script
+      - name: Verify report exists
+        if: always()
+        run: |
+          FILE="example_validation_results(latest-deps).json"
+          if [ ! -f "$FILE" ]; then
+            echo "Report file not found — writing empty fallback so pipeline continues."
+            echo "[]" > "$FILE"
+          elif [ ! -s "$FILE" ]; then
+            echo "Report file is empty — writing empty fallback so pipeline continues."
+            echo "[]" > "$FILE"
+          else
+            echo "Report file found and non-empty:"
+            wc -c "$FILE"
+          fi
+
       - name: Upload validation report
         if: always()
         uses: actions/upload-artifact@v4
@@ -56,24 +74,30 @@ jobs:
           path: "example_validation_results(latest-deps).json"
           if-no-files-found: warn
 
-      # FIX: pull --rebase before push to avoid race condition with the
-      # parallel validate-using-declared-deps job committing to the same branch
       - name: Commit validation report
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "example_validation_results(latest-deps).json"
-          git diff --staged --quiet || (
-            git pull --rebase origin ${{ github.ref_name }} &&
-            git commit -m "ci: update validation report [skip ci]" &&
-            git push
-          )
+          if git diff --staged --quiet; then
+            echo "No changes to commit, skipping."
+            exit 0
+          fi
+          git commit -m "ci: update validation report [skip ci]"
+          for i in 1 2 3 4 5; do
+            echo "Push attempt $i..."
+            git pull --rebase origin main && git push && echo "Push succeeded." && break
+            echo "Push attempt $i failed, retrying in 5s..."
+            sleep 5
+          done
 
 
+  # ─────────────────────────────────────────────
+  # JOB 2 — validate with declared deps
+  # ─────────────────────────────────────────────
   validate-using-declared-deps:
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -111,6 +135,22 @@ jobs:
           MESA_VERSION_LABEL: "ci"
         run: python scripts/declared_validate_examples.py --examples-dir examples --timeout 30
 
+      # Confirm the JSON file was actually written by the script
+      - name: Verify report exists
+        if: always()
+        run: |
+          FILE="example_validation_results(declared-deps).json"
+          if [ ! -f "$FILE" ]; then
+            echo "Report file not found — writing empty fallback so pipeline continues."
+            echo "[]" > "$FILE"
+          elif [ ! -s "$FILE" ]; then
+            echo "Report file is empty — writing empty fallback so pipeline continues."
+            echo "[]" > "$FILE"
+          else
+            echo "Report file found and non-empty:"
+            wc -c "$FILE"
+          fi
+
       - name: Upload validation report
         if: always()
         uses: actions/upload-artifact@v4
@@ -119,25 +159,32 @@ jobs:
           path: "example_validation_results(declared-deps).json"
           if-no-files-found: warn
 
-      # FIX: pull --rebase before push (same race condition fix as above)
       - name: Commit validation report
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "example_validation_results(declared-deps).json"
-          git diff --staged --quiet || (
-            git pull --rebase origin ${{ github.ref_name }} &&
-            git commit -m "ci: update validation report [skip ci]" &&
-            git push
-          )
+          if git diff --staged --quiet; then
+            echo "No changes to commit, skipping."
+            exit 0
+          fi
+          git commit -m "ci: update validation report [skip ci]"
+          for i in 1 2 3 4 5; do
+            echo "Push attempt $i..."
+            git pull --rebase origin main && git push && echo "Push succeeded." && break
+            echo "Push attempt $i failed, retrying in 5s..."
+            sleep 5
+          done
 
 
+  # ─────────────────────────────────────────────
+  # JOB 3 — check examples and create issues
+  # ─────────────────────────────────────────────
   check-examples:
     needs: [validate-using-latest-deps, validate-using-declared-deps]
-    # FIX: always run this job even if a validator job fails, so the pipeline
-    # is never skipped due to a validator error. Without this, a failed
-    # validator marks its job as failed, and downstream jobs are skipped by default.
+    # always() ensures this job runs even if a validator job fails,
+    # preventing the entire downstream pipeline from being skipped.
     if: always()
     runs-on: ubuntu-latest
 
@@ -154,9 +201,9 @@ jobs:
       - name: Install dependencies
         run: pip install requests pyyaml
 
-      # FIX: download artifacts produced by the validator jobs instead of
-      # relying on a git checkout that may not yet contain the freshly pushed
-      # JSON files (race between push and this job's checkout).
+      # Download artifacts produced by the validator jobs.
+      # continue-on-error means a missing artifact won't block the pipeline —
+      # the fallback step below handles that case.
       - name: Download latest-deps report
         uses: actions/download-artifact@v4
         with:
@@ -169,10 +216,28 @@ jobs:
           name: validation-report-declared
         continue-on-error: true
 
+      # Guard: ensure both JSON files exist, are non-empty, and are valid JSON.
+      # If any check fails we write [] so declare_status.py never hits JSONDecodeError.
+      - name: Validate downloaded reports
+        run: |
+          for f in \
+            "example_validation_results(latest-deps).json" \
+            "example_validation_results(declared-deps).json"
+          do
+            if [ ! -s "$f" ]; then
+              echo "WARNING: '$f' is missing or empty — writing empty fallback."
+              echo "[]" > "$f"
+            else
+              python -c "import json, sys; json.load(open('$f'))" 2>/dev/null \
+                && echo "'$f' is valid JSON." \
+                || { echo "WARNING: '$f' contains invalid JSON — writing empty fallback."; echo "[]" > "$f"; }
+            fi
+          done
+
       - name: Declare status
         run: python scripts/declare_status.py
 
-      - name: Generate issue
+      - name: Generate issues
         run: python scripts/generate_issues.py
 
       - name: Create or update issues
@@ -194,44 +259,34 @@ jobs:
             });
 
             for (const issue of issues) {
-
               const existing = existingIssues.data.find(
                 i => i.title === issue.title
               );
 
               if (existing) {
-
                 await github.rest.issues.update({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: existing.number,
-                  labels: [
-                    "example-health",
-                    issue.status
-                  ]
+                  labels: ["example-health", issue.status]
                 });
-
               } else {
-
                 await github.rest.issues.create({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   title: issue.title,
                   body: issue.body,
-                  labels: [
-                    "example-health",
-                    issue.status
-                  ]
+                  labels: ["example-health", issue.status]
                 });
-
               }
             }
 
 
+  # ─────────────────────────────────────────────
+  # JOB 4 — update health dashboard
+  # ─────────────────────────────────────────────
   update-dashboard:
     needs: [check-examples]
-    # FIX: same as check-examples — run even if check-examples fails so the
-    # dashboard always reflects the latest state rather than silently going stale.
     if: always()
     runs-on: ubuntu-latest
 
@@ -239,10 +294,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # FIX: pull latest commits (including JSON files pushed by validators)
-      # so generate_dashboard_1.py always reads up-to-date data.
+      # Pull latest commits (JSON files pushed by validator jobs) so the
+      # dashboard script always reads up-to-date data.
       - name: Pull latest changes
-        run: git pull --rebase origin ${{ github.ref_name }}
+        run: git pull --rebase origin main
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -258,5 +313,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add health_dashboard.md
-          git diff --staged --quiet || git commit -m "ci: update health dashboard [skip ci]"
+          if git diff --staged --quiet; then
+            echo "No changes to commit, skipping."
+            exit 0
+          fi
+          git commit -m "ci: update health dashboard [skip ci]"
           git push
