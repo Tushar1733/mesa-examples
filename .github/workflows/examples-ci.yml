@@ -47,53 +47,34 @@ jobs:
       - name: Disable GUI backend
         run: echo "MPLBACKEND=Agg" >> $GITHUB_ENV
 
-      # continue-on-error: true ensures that even if some examples fail
-      # validation (non-zero exit), all steps after this still run so the
-      # JSON report gets verified, uploaded, and committed.
+      # continue-on-error: true so that even if some examples fail validation
+      # (non-zero exit code), all steps below still run and the report is saved.
       - name: Run validator
         continue-on-error: true
         run: xvfb-run -a python scripts/latest_validate_examples.py
 
+      # If the script crashed before writing the file, create a valid empty fallback
+      # so the artifact upload always has something and downstream jobs never get an empty file.
       - name: Verify report exists
         if: always()
         run: |
           FILE="example_validation_results(latest-deps).json"
-          if [ ! -f "$FILE" ]; then
-            echo "Report file not found — writing empty fallback."
-            echo "[]" > "$FILE"
-          elif [ ! -s "$FILE" ]; then
-            echo "Report file is empty — writing empty fallback."
+          if [ ! -f "$FILE" ] || [ ! -s "$FILE" ]; then
+            echo "WARNING: $FILE missing or empty — writing fallback."
             echo "[]" > "$FILE"
           else
-            echo "Report file found and non-empty:"
-            wc -c "$FILE"
+            echo "OK: $FILE exists ($(wc -c < "$FILE") bytes)"
           fi
 
+      # Upload as artifact — this is the ONLY way data is passed to check-examples.
+      # No git commit here; git commits from parallel jobs cause race conditions.
       - name: Upload validation report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: validation-report-latest
           path: "example_validation_results(latest-deps).json"
-          if-no-files-found: warn
-
-      - name: Commit validation report
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "example_validation_results(latest-deps).json"
-          if git diff --staged --quiet; then
-            echo "No changes to commit, skipping."
-            exit 0
-          fi
-          git commit -m "ci: update validation report [skip ci]"
-          for i in 1 2 3 4 5; do
-            echo "Push attempt $i..."
-            git pull --rebase origin main && git push && echo "Push succeeded." && break
-            echo "Push attempt $i failed, retrying in 5s..."
-            sleep 5
-          done
+          if-no-files-found: error
 
 
   # ─────────────────────────────────────────────
@@ -133,55 +114,36 @@ jobs:
       - name: Clean stale venvs
         run: find examples -type d -name ".venv" -exec rm -rf {} +
 
-      # continue-on-error: true ensures that even if some examples fail
-      # validation (non-zero exit), all steps after this still run so the
-      # JSON report gets verified, uploaded, and committed.
+      # continue-on-error: true so that even if some examples fail validation
+      # (non-zero exit code), all steps below still run and the report is saved.
       - name: Run validator
         continue-on-error: true
         env:
           MESA_VERSION_LABEL: "ci"
         run: python scripts/declared_validate_examples.py --examples-dir examples --timeout 30
 
+      # If the script crashed before writing the file, create a valid empty fallback
+      # so the artifact upload always has something and downstream jobs never get an empty file.
       - name: Verify report exists
         if: always()
         run: |
           FILE="example_validation_results(declared-deps).json"
-          if [ ! -f "$FILE" ]; then
-            echo "Report file not found — writing empty fallback."
-            echo "[]" > "$FILE"
-          elif [ ! -s "$FILE" ]; then
-            echo "Report file is empty — writing empty fallback."
+          if [ ! -f "$FILE" ] || [ ! -s "$FILE" ]; then
+            echo "WARNING: $FILE missing or empty — writing fallback."
             echo "[]" > "$FILE"
           else
-            echo "Report file found and non-empty:"
-            wc -c "$FILE"
+            echo "OK: $FILE exists ($(wc -c < "$FILE") bytes)"
           fi
 
+      # Upload as artifact — this is the ONLY way data is passed to check-examples.
+      # No git commit here; git commits from parallel jobs cause race conditions.
       - name: Upload validation report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: validation-report-declared
           path: "example_validation_results(declared-deps).json"
-          if-no-files-found: warn
-
-      - name: Commit validation report
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "example_validation_results(declared-deps).json"
-          if git diff --staged --quiet; then
-            echo "No changes to commit, skipping."
-            exit 0
-          fi
-          git commit -m "ci: update validation report [skip ci]"
-          for i in 1 2 3 4 5; do
-            echo "Push attempt $i..."
-            git pull --rebase origin main && git push && echo "Push succeeded." && break
-            echo "Push attempt $i failed, retrying in 5s..."
-            sleep 5
-          done
+          if-no-files-found: error
 
 
   # ─────────────────────────────────────────────
@@ -205,18 +167,23 @@ jobs:
       - name: Install dependencies
         run: pip install requests pyyaml
 
+      # Download artifacts directly into the workspace root so declare_status.py
+      # finds them at the exact paths it expects.
       - name: Download latest-deps report
         uses: actions/download-artifact@v4
         with:
           name: validation-report-latest
+          path: .
         continue-on-error: true
 
       - name: Download declared-deps report
         uses: actions/download-artifact@v4
         with:
           name: validation-report-declared
+          path: .
         continue-on-error: true
 
+      # Ensure both files are present and valid before running any scripts.
       - name: Validate downloaded reports
         run: |
           for f in \
@@ -224,12 +191,12 @@ jobs:
             "example_validation_results(declared-deps).json"
           do
             if [ ! -s "$f" ]; then
-              echo "WARNING: '$f' is missing or empty — writing empty fallback."
+              echo "WARNING: '$f' missing or empty — writing fallback."
               echo "[]" > "$f"
             else
-              python -c "import json, sys; json.load(open('$f'))" 2>/dev/null \
-                && echo "'$f' is valid JSON." \
-                || { echo "WARNING: '$f' contains invalid JSON — writing empty fallback."; echo "[]" > "$f"; }
+              python -c "import json; json.load(open('$f'))" 2>/dev/null \
+                && echo "OK: '$f' is valid JSON ($(wc -c < "$f") bytes)." \
+                || { echo "WARNING: '$f' is invalid JSON — writing fallback."; echo "[]" > "$f"; }
             fi
           done
 
@@ -238,6 +205,23 @@ jobs:
 
       - name: Generate issues
         run: python scripts/generate_issues.py
+
+      # Commit both JSON reports to the repo in a single push — done here in
+      # check-examples (sequential, no race condition) instead of in the two
+      # parallel validator jobs where concurrent pushes caused failures.
+      - name: Commit validation reports
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "example_validation_results(latest-deps).json" \
+                  "example_validation_results(declared-deps).json"
+          if git diff --staged --quiet; then
+            echo "No changes to commit, skipping."
+          else
+            git pull --rebase origin main
+            git commit -m "ci: update validation reports [skip ci]"
+            git push
+          fi
 
       - name: Create or update issues
         uses: actions/github-script@v7
@@ -293,6 +277,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Pull the JSON files committed by check-examples before generating dashboard.
       - name: Pull latest changes
         run: git pull --rebase origin main
 
