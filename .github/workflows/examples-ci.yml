@@ -56,22 +56,19 @@ jobs:
           path: "example_validation_results(latest-deps).json"
           if-no-files-found: warn
 
+      # FIX: pull --rebase before push to avoid race condition with the
+      # parallel validate-using-declared-deps job committing to the same branch
       - name: Commit validation report
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "example_validation_results(latest-deps).json"
-          if git diff --staged --quiet; then
-            echo "No changes to commit, skipping."
-            exit 0
-          fi
-          git commit -m "ci: update validation report [skip ci]"
-          for i in 1 2 3 4 5; do
-            git pull --rebase origin main && git push && break
-            echo "Push attempt $i failed, retrying in 5s..."
-            sleep 5
-          done
+          git diff --staged --quiet || (
+            git pull --rebase origin ${{ github.ref_name }} &&
+            git commit -m "ci: update validation report [skip ci]" &&
+            git push
+          )
 
 
   validate-using-declared-deps:
@@ -122,26 +119,25 @@ jobs:
           path: "example_validation_results(declared-deps).json"
           if-no-files-found: warn
 
+      # FIX: pull --rebase before push (same race condition fix as above)
       - name: Commit validation report
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "example_validation_results(declared-deps).json"
-          if git diff --staged --quiet; then
-            echo "No changes to commit, skipping."
-            exit 0
-          fi
-          git commit -m "ci: update validation report [skip ci]"
-          for i in 1 2 3 4 5; do
-            git pull --rebase origin main && git push && break
-            echo "Push attempt $i failed, retrying in 5s..."
-            sleep 5
-          done
+          git diff --staged --quiet || (
+            git pull --rebase origin ${{ github.ref_name }} &&
+            git commit -m "ci: update validation report [skip ci]" &&
+            git push
+          )
 
 
   check-examples:
     needs: [validate-using-latest-deps, validate-using-declared-deps]
+    # FIX: always run this job even if a validator job fails, so the pipeline
+    # is never skipped due to a validator error. Without this, a failed
+    # validator marks its job as failed, and downstream jobs are skipped by default.
     if: always()
     runs-on: ubuntu-latest
 
@@ -158,6 +154,9 @@ jobs:
       - name: Install dependencies
         run: pip install requests pyyaml
 
+      # FIX: download artifacts produced by the validator jobs instead of
+      # relying on a git checkout that may not yet contain the freshly pushed
+      # JSON files (race between push and this job's checkout).
       - name: Download latest-deps report
         uses: actions/download-artifact@v4
         with:
@@ -231,6 +230,8 @@ jobs:
 
   update-dashboard:
     needs: [check-examples]
+    # FIX: same as check-examples — run even if check-examples fails so the
+    # dashboard always reflects the latest state rather than silently going stale.
     if: always()
     runs-on: ubuntu-latest
 
@@ -238,8 +239,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # FIX: pull latest commits (including JSON files pushed by validators)
+      # so generate_dashboard_1.py always reads up-to-date data.
       - name: Pull latest changes
-        run: git pull --rebase origin main
+        run: git pull --rebase origin ${{ github.ref_name }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -255,9 +258,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add health_dashboard.md
-          if git diff --staged --quiet; then
-            echo "No changes to commit, skipping."
-            exit 0
-          fi
-          git commit -m "ci: update health dashboard [skip ci]"
+          git diff --staged --quiet || git commit -m "ci: update health dashboard [skip ci]"
           git push
