@@ -141,7 +141,10 @@ jobs:
       - name: Install dependencies
         run: pip install requests pyyaml
 
-      - name: Run analysis
+      - name: Declare status
+        run: scripts/declare_status.py
+
+      - name: Generate issue
         run: python scripts/generate_issues.py
 
       - name: Create or update issues
