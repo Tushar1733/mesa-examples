@@ -1,0 +1,177 @@
+name: 1 — Validate Mesa Examples
+
+on:
+  push:
+    paths-ignore:
+      - "example_validation_results*.json"
+      - "health_dashboard.md"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+
+  # ─────────────────────────────────────────────
+  # JOB 1 — validate with latest deps
+  # ─────────────────────────────────────────────
+  validate-using-latest-deps:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Disable GUI backend
+        run: echo "MPLBACKEND=Agg" >> $GITHUB_ENV
+
+      # continue-on-error so steps below run even if some examples fail validation
+      - name: Run validator
+        continue-on-error: true
+        run: xvfb-run -a python scripts/latest_validate_examples.py
+
+      - name: Verify report exists
+        if: always()
+        run: |
+          FILE="example_validation_results(latest-deps).json"
+          if [ ! -f "$FILE" ] || [ ! -s "$FILE" ]; then
+            echo "WARNING: $FILE missing or empty — writing fallback."
+            echo "[]" > "$FILE"
+          else
+            echo "OK: $FILE found ($(wc -c < "$FILE") bytes)"
+          fi
+
+      - name: Upload validation report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-report-latest
+          path: "example_validation_results(latest-deps).json"
+          if-no-files-found: error
+
+
+  # ─────────────────────────────────────────────
+  # JOB 2 — validate with declared deps
+  # ─────────────────────────────────────────────
+  validate-using-declared-deps:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          sudo apt-get install -y lsof
+
+      - name: Install script dependencies
+        run: pip install requests pyyaml solara
+
+      - name: Disable GUI backend
+        run: echo "MPLBACKEND=Agg" >> $GITHUB_ENV
+
+      - name: Clean stale venvs
+        run: find examples -type d -name ".venv" -exec rm -rf {} +
+
+      # continue-on-error so steps below run even if some examples fail validation
+      - name: Run validator
+        continue-on-error: true
+        env:
+          MESA_VERSION_LABEL: "ci"
+        run: python scripts/declared_validate_examples.py --examples-dir examples --timeout 30
+
+      - name: Verify report exists
+        if: always()
+        run: |
+          FILE="example_validation_results(declared-deps).json"
+          if [ ! -f "$FILE" ] || [ ! -s "$FILE" ]; then
+            echo "WARNING: $FILE missing or empty — writing fallback."
+            echo "[]" > "$FILE"
+          else
+            echo "OK: $FILE found ($(wc -c < "$FILE") bytes)"
+          fi
+
+      - name: Upload validation report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-report-declared
+          path: "example_validation_results(declared-deps).json"
+          if-no-files-found: error
+
+
+  # ─────────────────────────────────────────────
+  # JOB 3 — commit both reports once both validators finish
+  # Runs sequentially so there is zero git push race condition
+  # ─────────────────────────────────────────────
+  commit-reports:
+    needs: [validate-using-latest-deps, validate-using-declared-deps]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download latest-deps report
+        uses: actions/download-artifact@v4
+        with:
+          name: validation-report-latest
+          path: .
+        continue-on-error: true
+
+      - name: Download declared-deps report
+        uses: actions/download-artifact@v4
+        with:
+          name: validation-report-declared
+          path: .
+        continue-on-error: true
+
+      - name: Commit and push both reports
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "example_validation_results(latest-deps).json" \
+                  "example_validation_results(declared-deps).json"
+          if git diff --staged --quiet; then
+            echo "No changes to commit, skipping."
+          else
+            git pull --rebase origin main
+            git commit -m "ci: update validation reports [skip ci]"
+            git push
+          fi

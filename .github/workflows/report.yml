@@ -1,0 +1,146 @@
+name: 2 — Report & Dashboard
+
+on:
+  # Triggers automatically after Workflow 1 completes on main.
+  # By this point both JSON files are already committed to the repo
+  # so all scripts get the data they need instantly with no timing issues.
+  workflow_run:
+    workflows: ["1 — Validate Mesa Examples"]
+    types:
+      - completed
+    branches:
+      - main
+
+  # Allow manual trigger too
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+
+  # ─────────────────────────────────────────────
+  # JOB 1 — check examples and create issues
+  # ─────────────────────────────────────────────
+  check-examples:
+    # Run regardless of whether Workflow 1 succeeded or failed
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        # Checkout main so we get the JSON files committed by Workflow 1
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install requests pyyaml
+
+      # Confirm both JSON files are present and valid before running scripts.
+      # At this point they should already be in the repo from Workflow 1.
+      - name: Verify reports exist
+        run: |
+          for f in \
+            "example_validation_results(latest-deps).json" \
+            "example_validation_results(declared-deps).json"
+          do
+            if [ ! -s "$f" ]; then
+              echo "WARNING: '$f' missing or empty — writing fallback."
+              echo "[]" > "$f"
+            else
+              python -c "import json; json.load(open('$f'))" 2>/dev/null \
+                && echo "OK: '$f' is valid JSON ($(wc -c < "$f") bytes)." \
+                || { echo "WARNING: '$f' is invalid JSON — writing fallback."; echo "[]" > "$f"; }
+            fi
+          done
+
+      - name: Declare status
+        run: python scripts/declare_status.py
+
+      - name: Generate issues
+        run: python scripts/generate_issues.py
+
+      - name: Create or update issues
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            const issues = JSON.parse(
+              fs.readFileSync('issues_to_create.json', 'utf8')
+            );
+
+            const existingIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100
+            });
+
+            for (const issue of issues) {
+              const existing = existingIssues.data.find(
+                i => i.title === issue.title
+              );
+
+              if (existing) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existing.number,
+                  labels: ["example-health", issue.status]
+                });
+              } else {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: issue.title,
+                  body: issue.body,
+                  labels: ["example-health", issue.status]
+                });
+              }
+            }
+
+
+  # ─────────────────────────────────────────────
+  # JOB 2 — update health dashboard
+  # ─────────────────────────────────────────────
+  update-dashboard:
+    needs: [check-examples]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate dashboard
+        run: python scripts/generate_dashboard_1.py
+
+      - name: Commit dashboard
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add health_dashboard.md
+          if git diff --staged --quiet; then
+            echo "No changes to commit, skipping."
+            exit 0
+          fi
+          git commit -m "ci: update health dashboard [skip ci]"
+          git push
