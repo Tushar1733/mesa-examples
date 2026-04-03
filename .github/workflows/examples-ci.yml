@@ -19,51 +19,34 @@ jobs:
   # ─────────────────────────────────────────────
   validate-using-latest-deps:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: 'pip'
+          python-version: "3.12"
+          cache: pip
 
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
+      - run: python -m pip install --upgrade pip
 
-      - name: Install system packages
-        run: |
+      - run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt
 
-      - name: Disable GUI backend
-        run: echo "MPLBACKEND=Agg" >> $GITHUB_ENV
+      - run: echo "MPLBACKEND=Agg" >> $GITHUB_ENV
 
       - name: Run validator
         run: xvfb-run -a python scripts/latest_validate_examples.py
 
-      # Confirm the JSON file was actually written by the script
       - name: Verify report exists
         if: always()
         run: |
           FILE="example_validation_results(latest-deps).json"
-          if [ ! -f "$FILE" ]; then
-            echo "Report file not found — writing empty fallback so pipeline continues."
+          if [ ! -s "$FILE" ]; then
             echo "[]" > "$FILE"
-          elif [ ! -s "$FILE" ]; then
-            echo "Report file is empty — writing empty fallback so pipeline continues."
-            echo "[]" > "$FILE"
-          else
-            echo "Report file found and non-empty:"
-            wc -c "$FILE"
           fi
 
       - name: Upload validation report
@@ -71,26 +54,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: validation-report-latest
-          path: "example_validation_results(latest-deps).json"
-          if-no-files-found: warn
-
-      - name: Commit validation report
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "example_validation_results(latest-deps).json"
-          if git diff --staged --quiet; then
-            echo "No changes to commit, skipping."
-            exit 0
-          fi
-          git commit -m "ci: update validation report [skip ci]"
-          for i in 1 2 3 4 5; do
-            echo "Push attempt $i..."
-            git pull --rebase origin main && git push && echo "Push succeeded." && break
-            echo "Push attempt $i failed, retrying in 5s..."
-            sleep 5
-          done
+          path: example_validation_results\(latest-deps\).json
 
 
   # ─────────────────────────────────────────────
@@ -98,57 +62,38 @@ jobs:
   # ─────────────────────────────────────────────
   validate-using-declared-deps:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: 'pip'
+          python-version: "3.12"
+          cache: pip
 
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
+      - run: python -m pip install --upgrade pip
 
-      - name: Install system packages
-        run: |
+      - run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb
-          sudo apt-get install -y lsof
+          sudo apt-get install -y xvfb lsof
 
-      - name: Install script dependencies
-        run: pip install requests pyyaml solara
+      - run: pip install requests pyyaml solara
 
-      - name: Disable GUI backend
-        run: echo "MPLBACKEND=Agg" >> $GITHUB_ENV
+      - run: echo "MPLBACKEND=Agg" >> $GITHUB_ENV
 
-      - name: Clean stale venvs
-        run: find examples -type d -name ".venv" -exec rm -rf {} +
+      - run: find examples -type d -name ".venv" -exec rm -rf {} +
 
       - name: Run validator
         env:
           MESA_VERSION_LABEL: "ci"
         run: python scripts/declared_validate_examples.py --examples-dir examples --timeout 30
 
-      # Confirm the JSON file was actually written by the script
       - name: Verify report exists
         if: always()
         run: |
           FILE="example_validation_results(declared-deps).json"
-          if [ ! -f "$FILE" ]; then
-            echo "Report file not found — writing empty fallback so pipeline continues."
+          if [ ! -s "$FILE" ]; then
             echo "[]" > "$FILE"
-          elif [ ! -s "$FILE" ]; then
-            echo "Report file is empty — writing empty fallback so pipeline continues."
-            echo "[]" > "$FILE"
-          else
-            echo "Report file found and non-empty:"
-            wc -c "$FILE"
           fi
 
       - name: Upload validation report
@@ -156,26 +101,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: validation-report-declared
-          path: "example_validation_results(declared-deps).json"
-          if-no-files-found: warn
-
-      - name: Commit validation report
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "example_validation_results(declared-deps).json"
-          if git diff --staged --quiet; then
-            echo "No changes to commit, skipping."
-            exit 0
-          fi
-          git commit -m "ci: update validation report [skip ci]"
-          for i in 1 2 3 4 5; do
-            echo "Push attempt $i..."
-            git pull --rebase origin main && git push && echo "Push succeeded." && break
-            echo "Push attempt $i failed, retrying in 5s..."
-            sleep 5
-          done
+          path: example_validation_results\(declared-deps\).json
 
 
   # ─────────────────────────────────────────────
@@ -183,56 +109,27 @@ jobs:
   # ─────────────────────────────────────────────
   check-examples:
     needs: [validate-using-latest-deps, validate-using-declared-deps]
-    # always() ensures this job runs even if a validator job fails,
-    # preventing the entire downstream pipeline from being skipped.
     if: always()
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: 'pip'
 
-      - name: Install dependencies
-        run: pip install requests pyyaml
+      - run: pip install requests pyyaml
 
-      # Download artifacts produced by the validator jobs.
-      # continue-on-error means a missing artifact won't block the pipeline —
-      # the fallback step below handles that case.
-      - name: Download latest-deps report
+      - name: Download latest report
         uses: actions/download-artifact@v4
         with:
           name: validation-report-latest
-        continue-on-error: true
 
-      - name: Download declared-deps report
+      - name: Download declared report
         uses: actions/download-artifact@v4
         with:
           name: validation-report-declared
-        continue-on-error: true
-
-      # Guard: ensure both JSON files exist, are non-empty, and are valid JSON.
-      # If any check fails we write [] so declare_status.py never hits JSONDecodeError.
-      - name: Validate downloaded reports
-        run: |
-          for f in \
-            "example_validation_results(latest-deps).json" \
-            "example_validation_results(declared-deps).json"
-          do
-            if [ ! -s "$f" ]; then
-              echo "WARNING: '$f' is missing or empty — writing empty fallback."
-              echo "[]" > "$f"
-            else
-              python -c "import json, sys; json.load(open('$f'))" 2>/dev/null \
-                && echo "'$f' is valid JSON." \
-                || { echo "WARNING: '$f' contains invalid JSON — writing empty fallback."; echo "[]" > "$f"; }
-            fi
-          done
 
       - name: Declare status
         run: python scripts/declare_status.py
@@ -247,11 +144,9 @@ jobs:
           script: |
             const fs = require('fs');
 
-            const issues = JSON.parse(
-              fs.readFileSync('issues_to_create.json', 'utf8')
-            );
+            const issues = JSON.parse(fs.readFileSync('issues_to_create.json','utf8'));
 
-            const existingIssues = await github.rest.issues.listForRepo({
+            const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: "open",
@@ -259,15 +154,14 @@ jobs:
             });
 
             for (const issue of issues) {
-              const existing = existingIssues.data.find(
-                i => i.title === issue.title
-              );
 
-              if (existing) {
+              const found = existing.data.find(i => i.title === issue.title);
+
+              if (found) {
                 await github.rest.issues.update({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  issue_number: existing.number,
+                  issue_number: found.number,
                   labels: ["example-health", issue.status]
                 });
               } else {
@@ -291,31 +185,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # Pull latest commits (JSON files pushed by validator jobs) so the
-      # dashboard script always reads up-to-date data.
-      - name: Pull latest changes
-        run: git pull --rebase origin main
+      - name: Download latest report
+        uses: actions/download-artifact@v4
+        with:
+          name: validation-report-latest
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Download declared report
+        uses: actions/download-artifact@v4
+        with:
+          name: validation-report-declared
+
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Generate dashboard
         run: python scripts/generate_dashboard_1.py
 
-      - name: Commit dashboard
-        if: always()
+      - name: Commit reports + dashboard
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add example_validation_results*.json
           git add health_dashboard.md
+
           if git diff --staged --quiet; then
-            echo "No changes to commit, skipping."
+            echo "No changes"
             exit 0
           fi
-          git commit -m "ci: update health dashboard [skip ci]"
+
+          git commit -m "ci: update validation reports and dashboard [skip ci]"
           git push
