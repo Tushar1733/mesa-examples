@@ -137,7 +137,7 @@ jobs:
 
   # ─────────────────────────────────────────────
   # JOB 3 — commit both reports once both validators finish
-  # Runs sequentially so there is zero git push race condition
+  # Sequential job = zero git push race condition
   # ─────────────────────────────────────────────
   commit-reports:
     needs: [validate-using-latest-deps, validate-using-declared-deps]
@@ -147,6 +147,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Download latest-deps report
         uses: actions/download-artifact@v4
@@ -166,12 +168,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Pull FIRST before staging anything to avoid dirty index rebase error
+          git pull --rebase origin main
           git add "example_validation_results(latest-deps).json" \
                   "example_validation_results(declared-deps).json"
           if git diff --staged --quiet; then
             echo "No changes to commit, skipping."
           else
-            git pull --rebase origin main
             git commit -m "ci: update validation reports [skip ci]"
             git push
           fi
