@@ -1,9 +1,9 @@
 name: 2 — Report & Dashboard
 
 on:
-  # Triggers automatically after Workflow 1 completes on main.
-  # By this point both JSON files are already committed to the repo
-  # so all scripts get the data they need instantly with no timing issues.
+  # Triggers automatically after Workflow 1 completes.
+  # By this point both JSON files are already committed to main
+  # so all scripts get the data they need with no timing issues.
   workflow_run:
     workflows: ["1 — Validate Mesa Examples"]
     types:
@@ -24,13 +24,13 @@ jobs:
   # JOB 1 — check examples and create issues
   # ─────────────────────────────────────────────
   check-examples:
-    # Run regardless of whether Workflow 1 succeeded or failed
     if: always()
     runs-on: ubuntu-latest
 
     steps:
+      # ref: main ensures we get the latest committed JSON files
+      # pushed by validate.yml, not the commit that triggered the workflow
       - name: Checkout repository
-        # Checkout main so we get the JSON files committed by Workflow 1
         uses: actions/checkout@v4
         with:
           ref: main
@@ -44,8 +44,7 @@ jobs:
       - name: Install dependencies
         run: pip install requests pyyaml
 
-      # Confirm both JSON files are present and valid before running scripts.
-      # At this point they should already be in the repo from Workflow 1.
+      # Confirm both JSON files are present and valid before running scripts
       - name: Verify reports exist
         run: |
           for f in \
@@ -119,6 +118,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ref: main ensures we get the latest committed JSON files
       - name: Checkout repository
         uses: actions/checkout@v4
         with:

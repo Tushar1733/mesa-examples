@@ -137,7 +137,7 @@ jobs:
 
   # ─────────────────────────────────────────────
   # JOB 3 — commit both reports once both validators finish
-  # Sequential job = zero git push race condition
+  # Runs sequentially — no race condition possible
   # ─────────────────────────────────────────────
   commit-reports:
     needs: [validate-using-latest-deps, validate-using-declared-deps]
@@ -168,8 +168,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Pull FIRST before staging anything to avoid dirty index rebase error
-          git pull --rebase origin main
           git add "example_validation_results(latest-deps).json" \
                   "example_validation_results(declared-deps).json"
           if git diff --staged --quiet; then
