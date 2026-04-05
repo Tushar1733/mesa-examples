@@ -49,7 +49,7 @@ jobs:
       # continue-on-error so steps below run even if some examples fail validation
       - name: Run validator
         continue-on-error: true
-        run: xvfb-run -a python scripts/latest_validate_examples.py
+        run: xvfb-run -a python scripts/latest_validate_examples.py --output-json "example_validation_results(latest-deps).json"
 
       - name: Verify report exists
         if: always()
@@ -113,7 +113,7 @@ jobs:
         continue-on-error: true
         env:
           MESA_VERSION_LABEL: "ci"
-        run: python scripts/declared_validate_examples.py --examples-dir examples --timeout 30
+        run: python scripts/declared_validate_examples.py --examples-dir examples --timeout 30 --output-json "example_validation_results(declared-deps).json"
 
       - name: Verify report exists
         if: always()
@@ -141,7 +141,7 @@ jobs:
   # ─────────────────────────────────────────────
   commit-reports:
     needs: [validate-using-latest-deps, validate-using-declared-deps]
-    if: always()
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && always()
     runs-on: ubuntu-latest
 
     steps:
