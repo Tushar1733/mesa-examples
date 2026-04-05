@@ -57,7 +57,7 @@ jobs:
           FILE="example_validation_results(latest-deps).json"
           if [ ! -f "$FILE" ] || [ ! -s "$FILE" ]; then
             echo "WARNING: $FILE missing or empty — writing fallback."
-            echo "[]" > "$FILE"
+            echo '{"examples": []}' > "$FILE"
           else
             echo "OK: $FILE found ($(wc -c < "$FILE") bytes)"
           fi
@@ -121,7 +121,7 @@ jobs:
           FILE="example_validation_results(declared-deps).json"
           if [ ! -f "$FILE" ] || [ ! -s "$FILE" ]; then
             echo "WARNING: $FILE missing or empty — writing fallback."
-            echo "[]" > "$FILE"
+            echo '{"examples": []}' > "$FILE"
           else
             echo "OK: $FILE found ($(wc -c < "$FILE") bytes)"
           fi

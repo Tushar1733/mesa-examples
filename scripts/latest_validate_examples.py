@@ -782,7 +782,7 @@ def generate_report(
                 "maintainer":   meta_by_name[r.name].maintainer   if r.name in meta_by_name else None,
                 "mesa_version": meta_by_name[r.name].mesa_version if r.name in meta_by_name else None,
                 "requirements": meta_by_name[r.name].requirements if r.name in meta_by_name else None,
-                "logical_behaviour": {
+                "model_test": {
                     "passed": r.stage_model_test.passed,
                     "notes":  r.stage_model_test.notes,
                 } if r.stage_model_test else None,

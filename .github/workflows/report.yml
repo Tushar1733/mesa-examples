@@ -53,11 +53,11 @@ jobs:
           do
             if [ ! -s "$f" ]; then
               echo "WARNING: '$f' missing or empty — writing fallback."
-              echo "[]" > "$f"
+              echo '{"examples": []}' > "$f"
             else
               python -c "import json; json.load(open('$f'))" 2>/dev/null \
                 && echo "OK: '$f' is valid JSON ($(wc -c < "$f") bytes)." \
-                || { echo "WARNING: '$f' is invalid JSON — writing fallback."; echo "[]" > "$f"; }
+                || { echo "WARNING: '$f' is invalid JSON — writing fallback."; echo '{"examples": []}' > "$f"; }
             fi
           done
 
