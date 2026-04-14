@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-05T12:28:50.878274+00:00",
+  "generated_at": "2026-04-14T02:30:00.950631+00:00",
   "run": {
     "examples_dir": "/home/runner/work/mesa-examples/mesa-examples/examples",
     "timeout_seconds": 30,
@@ -16,55 +16,25 @@
   },
   "examples": [
     {
-      "name": "conways_game_of_life_fast",
-      "status": "FAIL",
-      "notes": "TypeError",
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/conways_game_of_life_fast",
-      "run_command": "solara run app.py",
-      "port": 8765,
-      "maintainer": "your_username",
-      "mesa_version": ">=2.3",
-      "requirements": "requirements.txt",
-      "model_test": {
-        "passed": false,
-        "notes": "No module named 'networkx'"
-      }
-    },
-    {
-      "name": "virus_antibody",
-      "status": "FAIL",
-      "notes": "TypeError",
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/virus_antibody",
-      "run_command": "solara run app.py",
-      "port": 8765,
-      "maintainer": "your_username",
-      "mesa_version": ">=3.0",
-      "requirements": "requirements.txt",
-      "model_test": {
-        "passed": false,
-        "notes": "No module named 'networkx'"
-      }
-    },
-    {
-      "name": "bank_reserves",
-      "status": "PASS",
-      "notes": null,
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/bank_reserves",
-      "run_command": "solara run app.py",
-      "port": 8765,
-      "maintainer": "your_username",
-      "mesa_version": ">=3.0",
-      "requirements": "requirements.txt",
-      "model_test": {
-        "passed": true,
-        "notes": "step() x5 passed  |  height=20, width=20, init_people=2, rich_threshold=10, reserve_percent=50 (+1 more)"
-      }
-    },
-    {
-      "name": "hex_snowflake",
+      "name": "caching_and_replay",
       "status": "FAIL",
       "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/hex_snowflake",
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/caching_and_replay",
+      "run_command": "mesa runserver",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": false,
+        "notes": "No module named 'networkx'"
+      }
+    },
+    {
+      "name": "charts",
+      "status": "FAIL",
+      "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/charts",
       "run_command": "mesa runserver",
       "port": 8765,
       "maintainer": "your_username",
@@ -76,10 +46,10 @@
       }
     },
     {
-      "name": "humanitarian_aid_distribution",
+      "name": "hex_ant",
       "status": "FAIL",
-      "notes": "TypeError",
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/humanitarian_aid_distribution",
+      "notes": "ImportError: relative import",
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/hex_ant",
       "run_command": "solara run app.py",
       "port": 8765,
       "maintainer": "your_username",
@@ -87,52 +57,7 @@
       "requirements": "requirements.txt",
       "model_test": {
         "passed": false,
-        "notes": "No module named 'networkx'"
-      }
-    },
-    {
-      "name": "warehouse",
-      "status": "PASS",
-      "notes": null,
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/warehouse",
-      "run_command": "solara run app.py",
-      "port": 8765,
-      "maintainer": "your_username",
-      "mesa_version": ">=3.0",
-      "requirements": "requirements.txt",
-      "model_test": {
-        "passed": true,
-        "notes": "step() x5 passed  |  rng=Generator(PCG64) at 0x7FECB6A22180"
-      }
-    },
-    {
-      "name": "dining_philosophers",
-      "status": "FAIL",
-      "notes": "TypeError",
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/dining_philosophers",
-      "run_command": "solara run app.py",
-      "port": 8765,
-      "maintainer": "your_username",
-      "mesa_version": ">=3.0",
-      "requirements": "requirements.txt",
-      "model_test": {
-        "passed": false,
-        "notes": "No module named 'altair'"
-      }
-    },
-    {
-      "name": "color_patches",
-      "status": "FAIL",
-      "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/color_patches",
-      "run_command": "mesa runserver",
-      "port": 8765,
-      "maintainer": "your_username",
-      "mesa_version": ">=3.0",
-      "requirements": "requirements.txt",
-      "model_test": {
-        "passed": true,
-        "notes": "step() x5 passed  |  width=20, height=20"
+        "notes": "attempted relative import with no known parent package"
       }
     },
     {
@@ -151,48 +76,48 @@
       }
     },
     {
-      "name": "deffuant_weisbuch",
-      "status": "PASS",
-      "notes": null,
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/deffuant_weisbuch",
+      "name": "conways_game_of_life_fast",
+      "status": "FAIL",
+      "notes": "TypeError",
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/conways_game_of_life_fast",
       "run_command": "solara run app.py",
       "port": 8765,
       "maintainer": "your_username",
-      "mesa_version": ">=3.0",
+      "mesa_version": ">=2.3",
       "requirements": "requirements.txt",
       "model_test": {
-        "passed": true,
-        "notes": "step() x5 passed  |  n=100, epsilon=0.2, mu=0.5, rng=Generator(PCG64) at 0x7F1A8A255700"
+        "passed": false,
+        "notes": "No module named 'networkx'"
       }
     },
     {
-      "name": "shape_example",
+      "name": "dining_philosophers",
       "status": "FAIL",
-      "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/shape_example",
-      "run_command": "mesa runserver",
+      "notes": "TypeError",
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/dining_philosophers",
+      "run_command": "solara run app.py",
       "port": 8765,
       "maintainer": "your_username",
       "mesa_version": ">=3.0",
       "requirements": "requirements.txt",
       "model_test": {
         "passed": false,
-        "notes": ""
+        "notes": "No module named 'altair'"
       }
     },
     {
-      "name": "hotelling_law",
-      "status": "PASS",
-      "notes": null,
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/hotelling_law",
+      "name": "virus_antibody",
+      "status": "FAIL",
+      "notes": "TypeError",
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/virus_antibody",
       "run_command": "solara run app.py",
       "port": 8765,
       "maintainer": "your_username",
       "mesa_version": ">=3.0",
       "requirements": "requirements.txt",
       "model_test": {
-        "passed": true,
-        "notes": "step() x5 passed  |  n_stores=20, n_consumers=100, width=50, height=50, mode='default' (+4 more)"
+        "passed": false,
+        "notes": "No module named 'networkx'"
       }
     },
     {
@@ -226,40 +151,10 @@
       }
     },
     {
-      "name": "hex_ant",
-      "status": "FAIL",
-      "notes": "ImportError: relative import",
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/hex_ant",
-      "run_command": "solara run app.py",
-      "port": 8765,
-      "maintainer": "your_username",
-      "mesa_version": ">=3.0",
-      "requirements": "requirements.txt",
-      "model_test": {
-        "passed": false,
-        "notes": "attempted relative import with no known parent package"
-      }
-    },
-    {
-      "name": "boltzmann_wealth_model_network",
-      "status": "PASS",
-      "notes": null,
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/boltzmann_wealth_model_network",
-      "run_command": "solara run app.py",
-      "port": 8765,
-      "maintainer": "your_username",
-      "mesa_version": ">=3.0",
-      "requirements": "requirements.txt",
-      "model_test": {
-        "passed": true,
-        "notes": "step() x5 passed  |  n=7, num_nodes=10, rng=Generator(PCG64) at 0x7F28BFA73E60"
-      }
-    },
-    {
-      "name": "emperor_dilemma",
+      "name": "humanitarian_aid_distribution",
       "status": "FAIL",
       "notes": "TypeError",
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/emperor_dilemma",
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/humanitarian_aid_distribution",
       "run_command": "solara run app.py",
       "port": 8765,
       "maintainer": "your_username",
@@ -271,26 +166,41 @@
       }
     },
     {
-      "name": "charts",
-      "status": "FAIL",
-      "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/charts",
-      "run_command": "mesa runserver",
+      "name": "warehouse",
+      "status": "PASS",
+      "notes": null,
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/warehouse",
+      "run_command": "solara run app.py",
       "port": 8765,
       "maintainer": "your_username",
-      "mesa_version": ">=2.0",
+      "mesa_version": ">=3.0",
       "requirements": "requirements.txt",
       "model_test": {
-        "passed": false,
-        "notes": ""
+        "passed": true,
+        "notes": "step() x5 passed  |  rng=Generator(PCG64) at 0x7FA9BEBA67A0"
       }
     },
     {
-      "name": "caching_and_replay",
+      "name": "hotelling_law",
+      "status": "PASS",
+      "notes": null,
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/hotelling_law",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  n_stores=20, n_consumers=100, width=50, height=50, mode='default' (+4 more)"
+      }
+    },
+    {
+      "name": "emperor_dilemma",
       "status": "FAIL",
-      "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
-      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/caching_and_replay",
-      "run_command": "mesa runserver",
+      "notes": "TypeError",
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/emperor_dilemma",
+      "run_command": "solara run app.py",
       "port": 8765,
       "maintainer": "your_username",
       "mesa_version": ">=3.0",
@@ -312,7 +222,97 @@
       "requirements": "requirements.txt",
       "model_test": {
         "passed": true,
-        "notes": "step() x5 passed  |  width=100, height=100, density=0.65, rng=Generator(PCG64) at 0x7F362F262C00"
+        "notes": "step() x5 passed  |  width=100, height=100, density=0.65, rng=Generator(PCG64) at 0x7F279527F220"
+      }
+    },
+    {
+      "name": "hex_snowflake",
+      "status": "FAIL",
+      "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/hex_snowflake",
+      "run_command": "mesa runserver",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=2.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": false,
+        "notes": ""
+      }
+    },
+    {
+      "name": "boltzmann_wealth_model_network",
+      "status": "PASS",
+      "notes": null,
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/boltzmann_wealth_model_network",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  n=7, num_nodes=10, rng=Generator(PCG64) at 0x7F601E580C80"
+      }
+    },
+    {
+      "name": "bank_reserves",
+      "status": "PASS",
+      "notes": null,
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/bank_reserves",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  height=20, width=20, init_people=2, rich_threshold=10, reserve_percent=50 (+1 more)"
+      }
+    },
+    {
+      "name": "color_patches",
+      "status": "FAIL",
+      "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/color_patches",
+      "run_command": "mesa runserver",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  width=20, height=20"
+      }
+    },
+    {
+      "name": "deffuant_weisbuch",
+      "status": "PASS",
+      "notes": null,
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/deffuant_weisbuch",
+      "run_command": "solara run app.py",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  n=100, epsilon=0.2, mu=0.5, rng=Generator(PCG64) at 0x7F9806155700"
+      }
+    },
+    {
+      "name": "shape_example",
+      "status": "FAIL",
+      "notes": "Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'",
+      "path": "/home/runner/work/mesa-examples/mesa-examples/examples/shape_example",
+      "run_command": "mesa runserver",
+      "port": 8765,
+      "maintainer": "your_username",
+      "mesa_version": ">=3.0",
+      "requirements": "requirements.txt",
+      "model_test": {
+        "passed": false,
+        "notes": ""
       }
     }
   ]
