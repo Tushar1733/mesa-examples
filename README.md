@@ -1,4 +1,34 @@
+
+# CI-Powered Dual Validation System for mesa-examples
+
+## Overview
+An automated CI system that validates every mesa-example against two environments (latest Mesa version and declared dependencies), tracks health status, and surfaces issues via GitHub Actions.
+
+## How It Works
+
+**Frontmatter YAML** in each example's `README.md` acts as the single source of truth for the CI system.
+
+**Two validator scripts** test each example:
+- `latest_env_validator.py` — tests against latest Mesa + dependencies
+- `declared_env_validator.py` — tests against exact versions declared in frontmatter
+
+Both generate a JSON report which CI commits back to the repo.
+
+**Health status** is derived from the combined results and used to:
+- Auto-generate GitHub Issues for broken examples
+- Update a live `example-health.md` dashboard
+
+## Lifecycle States
+`active` → `needs-upgrade` / `broken` → `archived`
+
+## Scheduled Runs
+Weekly cron job (Sunday midnight) catches silent decay from upstream changes.
+
+## Scripts
+See [`/scripts`](./scripts) for the validator implementations.
+
 # Mesa Examples
+
 ## Core Mesa examples
 The core Mesa examples are available at the main Mesa repository: https://github.com/mesa/mesa/tree/main/mesa/examples
 
