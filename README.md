@@ -1,31 +1,193 @@
 
 # CI-Powered Dual Validation System for mesa-examples
 
-## Overview
-An automated CI system that validates every mesa-example against two environments (latest Mesa version and declared dependencies), tracks health status, and surfaces issues via GitHub Actions.
+Validates every mesa-example against two environments, tracks health status, and surfaces broken examples automatically via GitHub Actions.
 
-## How It Works
+> **Note:** The current prototype uses standalone `example.yaml` files per example. Frontmatter YAML integration into `README.md` is planned for the GSoC implementation phase.
 
-**Frontmatter YAML** in each example's `README.md` acts as the single source of truth for the CI system.
+---
 
-**Two validator scripts** test each example:
-- `latest_env_validator.py` — tests against latest Mesa + dependencies
-- `declared_env_validator.py` — tests against exact versions declared in frontmatter
+## How to run locally
 
-Both generate a JSON report which CI commits back to the repo.
+```bash
+git clone https://github.com/Tushar1733/mesa-examples
+cd mesa-examples
+pip install -r scripts/requirements.txt
 
-**Health status** is derived from the combined results and used to:
-- Auto-generate GitHub Issues for broken examples
-- Update a live `example-health.md` dashboard
+# Validator 1 — latest environment (~2 min)
+python scripts/latest_env_validator.py
 
-## Lifecycle States
-`active` → `needs-upgrade` / `broken` → `archived`
+# Validator 2 — declared environment (~14 min)
+python scripts/declared_env_validator.py
+```
 
-## Scheduled Runs
-Weekly cron job (Sunday midnight) catches silent decay from upstream changes.
+---
 
-## Scripts
-See [`/scripts`](./scripts) for the validator implementations.
+## Demo — Validator 1 (latest environment)
+
+Each example runs through two stages:
+
+```
+[ Forest Fire Model ]  (examples/forest_fire)
+  [Stage A] Running model unit test ...
+    [PASS] step() x5 passed  |  width=100, height=100, density=0.65, rng=None
+  Running : solara run app.py
+  Step 1  : Starting server process...
+  Step 2  : Waiting up to 10s for server to boot (scanning for errors)...
+  Step 3  : Boot window complete. Checking for late errors...
+  Step 4  : Sending HTTP health-check to http://localhost:8765 ...
+  Step 5  : HTTP 200 received. Stopping server...
+  [Stage B] Server boot [PASS]
+
+[ termites ]  (examples/termites)
+  [Stage A] Running model unit test ...
+    [FAIL] HasPropertyLayers.add_property_layer() takes 2 positional arguments but 3 were given
+  Step 2  : Error detected in output -> TypeError
+  [Stage B] Server boot [FAIL]  TypeError
+
+[ caching_and_replay ]  (examples/caching_and_replay)
+  [Stage A] Running model unit test ...
+    [PASS] step() x5 passed  |  height=20, width=20, homophily=3, radius=1, density=0.8
+  [Stage B] Server boot [FAIL]  Legacy Mesa API: 'mesa runserver' removed - migrate to 'solara run app.py'
+```
+
+**Full summary across all 20 examples:**
+
+```
+Example Name                    Server    Model Test  Notes
+---------------------------------------------------------------
+aco_tsp                         PASS      PASS
+dining_philosophers             PASS      PASS
+virus_antibody                  PASS      PASS
+rumor_mill                      PASS      PASS
+humanitarian_aid_distribution   PASS      PASS
+warehouse                       PASS      PASS
+hotelling_law                   PASS      PASS
+Forest Fire Model               PASS      PASS
+boltzmann_wealth_model_network  PASS      PASS
+deffuant_weisbuch               PASS      PASS
+bank_reserves                   PASS      FAIL        attempted relative import
+emperor_dilemma                 FAIL      PASS        ImportError: relative import
+caching_and_replay              FAIL      PASS        Legacy Mesa API: 'mesa runserver' removed
+color_patches                   FAIL      PASS        Legacy Mesa API: 'mesa runserver' removed
+shape_example                   FAIL      PASS        Legacy Mesa API: 'mesa runserver' removed
+charts                          FAIL      FAIL        Legacy Mesa API: 'mesa runserver' removed
+hex_ant                         FAIL      FAIL        ImportError: relative import
+conways_game_of_life_fast       FAIL      FAIL        ImportError
+termites                        FAIL      FAIL        TypeError
+hex_snowflake                   FAIL      FAIL        Legacy Mesa API: 'mesa runserver' removed
+
+Server boot (Solara) → PASS: 11  FAIL: 9  TIMEOUT: 0
+Model unit test      → PASS: 14  FAIL: 6
+```
+
+---
+
+## Demo — Validator 2 (declared environment)
+
+`declared_env_validator.py` creates an **isolated virtualenv per example**, installs only the pinned versions from each example's `requirements.txt`, then runs the same two-stage test. This confirms that declared dependencies are actually sufficient and catches version conflicts invisible to Validator 1.
+
+Takes ~14 minutes across all 20 examples due to per-example environment setup.
+
+---
+
+## JSON report output
+
+Both validators write a structured JSON report committed back to the repo after every CI run. Real output from `example_validation_results(latest-deps).json`:
+
+```json
+{
+  "generated_at": "2026-04-21T04:27:05.804995+00:00",
+  "run": {
+    "examples_dir": "examples",
+    "timeout_seconds": 30,
+    "mesa_version_label": "local",
+    "python": "3.12.13",
+    "platform": "linux"
+  },
+  "summary": {
+    "total": 20,
+    "server_boot": { "passed": 11, "failed": 9, "timeout": 0 },
+    "logical_behaviour": { "passed": 14, "failed": 6, "skipped": 0 }
+  },
+  "examples": [
+    {
+      "name": "Forest Fire Model",
+      "status": "PASS",
+      "notes": null,
+      "path": "examples/forest_fire",
+      "run_command": "solara run app.py",
+      "mesa_version": ">=3.0",
+      "model_test": {
+        "passed": true,
+        "notes": "step() x5 passed  |  width=100, height=100, density=0.65, rng=None"
+      }
+    },
+    {
+      "name": "termites",
+      "status": "FAIL",
+      "notes": "TypeError",
+      "path": "examples/termites",
+      "run_command": "solara run app.py",
+      "mesa_version": ">=3.0",
+      "model_test": {
+        "passed": false,
+        "notes": "HasPropertyLayers.add_property_layer() takes 2 positional arguments but 3 were given"
+      }
+    }
+  ]
+}
+```
+
+This JSON feeds directly into health status labelling, automatic GitHub Issue creation, and the live `example-health.md` dashboard.
+
+---
+
+## How it works
+
+**Two validators** test each example in different environments:
+
+- `latest_env_validator.py` — tests against newest Mesa + dependencies. Catches upstream breakage early.
+- `declared_env_validator.py` — creates an isolated venv per example, installs only pinned versions. Confirms declared dependencies are sufficient.
+
+Each validator runs two stages per example:
+
+- **Stage A — model unit test:** initialises the model class and runs `step()` five times, validating internal logic.
+- **Stage B — server boot:** spawns the example process, monitors stdout/stderr for known error patterns, then sends an HTTP health-check to confirm the server is actually responsive.
+
+**Scheduled runs** via a weekly cron job (Sunday midnight) catch silent decay from upstream Mesa releases or dependency changes even with no repository activity.
+
+---
+
+## Architecture
+
+```
+example.yaml  (metadata per example)
+      │
+      ▼
+┌─────────────────┐     ┌──────────────────────────┐
+│  Validator 1    │     │  Validator 2              │
+│  latest env     │     │  declared env             │
+│  ~2 min         │     │  isolated venv / example  │
+│                 │     │  ~14 min                  │
+└────────┬────────┘     └────────────┬─────────────┘
+         │                           │
+         └─────────────┬─────────────┘
+                       ▼
+                JSON health report
+                       │
+          ┌────────────┼─────────────┐
+          ▼            ▼             ▼
+    Health status   GitHub       example-
+    lifecycle       Issues       health.md
+    labels          (auto)       dashboard
+```
+
+---
+
+## Full design
+
+See the [GSoC 2026 proposal discussion](https://github.com/projectmesa/mesa-examples/discussions/417) for complete architecture details including the lifecycle system, issue automation, and CI pipeline design.
 
 # Mesa Examples
 
