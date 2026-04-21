@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-21T04:27:05.804995+00:00",
+  "generated_at": "2026-04-21T04:51:37.315262+00:00",
   "run": {
     "examples_dir": "examples",
     "timeout_seconds": 30,
@@ -79,7 +79,7 @@
       "requirements": "requirements.txt",
       "model_test": {
         "passed": true,
-        "notes": "step() x5 passed  |  num_agents=20, max_steps=1000000, ant_alpha=1.0, ant_beta=5.0, tsp_graph=<aco_tsp.model.TSPGraph object at 0x7f021b270830>"
+        "notes": "step() x5 passed  |  num_agents=20, max_steps=1000000, ant_alpha=1.0, ant_beta=5.0, tsp_graph=<aco_tsp.model.TSPGraph object at 0x7f2dd1c5fe30>"
       }
     },
     {
